@@ -5,7 +5,7 @@ module MC_lib
 
     use, non_intrinsic :: intrinsic_prng_initializer_lib
 
-    use, non_intrinsic :: math_constants_lib, only: MATH_1_2SQRTPI
+    use, non_intrinsic :: math_constants_lib, only: MATH_1_SQRT2PI
 
     implicit none
 
@@ -23,7 +23,7 @@ module MC_lib
         !> 本 FUNCTION の戻り値
         real(real64) :: gaussian
 
-        gaussian = MATH_1_2SQRTPI * exp( - 0.5_real64 * x * x )
+        gaussian = MATH_1_SQRT2PI * exp( - 0.5_real64 * x * x )
 
     end function gaussian
 
