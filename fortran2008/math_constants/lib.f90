@@ -13,6 +13,9 @@ module math_constants_lib
     !> 本 MODULE で定義する PARAMETER
     real(real64), parameter :: MATH_2PI = 2 * MATH_PI_DEF
 
+    !> 本 MODULE で定義する PARAMETER
+    real(real64), parameter :: MATH_SQRTPI = sqrt(MATH_PI_DEF)
+
 
 
     !> 本 MODULE で定義する PARAMETER
