@@ -135,7 +135,7 @@ set x2label ""
 set x2label  font "" textcolor lt -1 norotate
 set xrange [ * : * ] noreverse writeback
 set x2range [ * : * ] noreverse writeback
-set ylabel "" 
+set ylabel "expectation <?>" 
 set ylabel  font "" textcolor lt -1 rotate
 set y2label "" 
 set y2label  font "" textcolor lt -1 rotate
@@ -181,8 +181,8 @@ VoxelDistance = 0.0
 
 set output "expectation.svg"
 
-plot 'samples.dat' binary format="%3double" using 0:2 with lines title '<x>'   , \
-     ''            binary format="%3double" using 0:3 with lines title '<x^2>' , \
+plot 'samples.dat' binary format="%1int%2double" using 1:2 with linespoints title '<x>'   , \
+     ''            binary format="%1int%2double" using 1:3 with linespoints title '<x^2>' , \
     1.0            linecolor black dashtype '-' notitle
 
 set output

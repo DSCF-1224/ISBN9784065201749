@@ -32,14 +32,14 @@ module gaussian_metropolis_lib
 
 
 
-    subroutine exe_gaussian_metropolis(seed, num_samples_required, step_size, step_center, num_samples_total, generated_samples)
+    subroutine exe_gaussian_metropolis(seed, num_samples_required, step_size, step_center, acceptance_rate, generated_samples)
 
         !> 本 SUBROUTINE の仮引数
         !> 擬似乱数生成器のシード値
         integer(int32), intent(in) :: seed
 
         !> 本 SUBROUTINE の仮引数
-        !> 必要な（受理された）サンプル数
+        !> 必要なサンプル数
         integer(int32), intent(in) :: num_samples_required
 
         !> 本 SUBROUTINE の仮引数
@@ -52,7 +52,7 @@ module gaussian_metropolis_lib
 
         !> 本 SUBROUTINE の仮引数
         !> 受理されなかったものも含めたサンプル数
-        integer(int32), intent(out) :: num_samples_total
+        real(real64), dimension(num_samples_required), intent(inout) :: acceptance_rate
 
         !> 本 SUBROUTINE の仮引数
         !> 受理された（生成された）サンプル
@@ -61,12 +61,16 @@ module gaussian_metropolis_lib
 
 
         !> 本 SUBROUTINE 用の変数
-        !> 作用の出力値の保持用
-        real(real64) :: action_ini
+        !> 採択されたサンプル数
+        integer(int32) :: num_samples_accepted
 
         !> 本 SUBROUTINE 用の変数
         !> 作用の出力値の保持用
-        real(real64) :: action_fin
+        real(real64) :: action_now
+
+        !> 本 SUBROUTINE 用の変数
+        !> 作用の出力値の保持用
+        real(real64) :: action_new
 
         !> 本 SUBROUTINE 用の変数
         !> Metropolis Test 用
@@ -83,7 +87,7 @@ module gaussian_metropolis_lib
 
 
         !> 本 SUBROUTINE 用の補助変数
-        integer(int32) :: num_samples_accepted
+        integer(int32) :: iter_sample
 
 
 
@@ -92,87 +96,77 @@ module gaussian_metropolis_lib
 
 
 
-        ! 本 SUBROUTINE の出力値の初期化
-
-        num_samples_accepted = 1_int32
-        num_samples_total    = 0_int32
-
-        generated_samples(num_samples_accepted) = 0.0_real64
+        ! Metropolis 法の初期値の指定
+        generated_samples    (1) = 0.0_real64
+        acceptance_rate      (1) = 1.0_real64
+        num_samples_accepted     = 1_int32
 
 
 
-        loop_accepted_sample: &!
-        do
+        ! Metropolis 法によるサンプルの生成
+        do iter_sample = 2_int32, num_samples_required
 
-            associate( sample_backup => generated_samples( num_samples_accepted     ) )
-            associate( sample_new    => generated_samples( num_samples_accepted + 1 ) )
+            associate( sample_now => generated_samples( iter_sample - 1_int32 ) )
+            associate( sample_new => generated_samples( iter_sample           ) )
 
                 ! 受理済みのサンプルに対する作用を計算
-
-                action_ini = action(sample_backup)
-
-
-
-                loop_metropolis_test: &!
-                do
-
-                    ! 受理済みのサンプルからの変化量候補を用意
-
-                    call random_number(sample_delta)
-
-                    sample_delta = (sample_delta - 0.5_real64) * 2.0_real64 * step_size
-                    sample_delta = sample_delta + step_center
+    
+                action_now = action(sample_now)
 
 
 
-                    ! 新しいのサンプル候補の作成
 
-                    sample_new        = sample_backup     + sample_delta
-                    num_samples_total = num_samples_total + 1_int32
-
-
-
-                    ! 新しいのサンプル候補に対する作用を計算
-
-                    action_fin = action(sample_new)
+                ! 受理済みのサンプルからの
+                ! 変化量候補を生成
+    
+                call random_number(sample_delta)
+    
+                sample_delta = (sample_delta - 0.5_real64) * 2.0_real64 * step_size
+                sample_delta = sample_delta + step_center
 
 
 
-                    ! Metropolis Test
+                ! 新しいのサンプル候補の生成
 
-                    call random_number(metropolis)
+                sample_new = sample_now + sample_delta
 
-                    if ( exp(action_ini - action_fin) .gt. metropolis ) then
 
-                        ! 採択された場合
 
-                        num_samples_accepted = &!
-                        num_samples_accepted + 1_int32
+                ! 新しいのサンプル候補に対する作用を計算
 
-                        exit loop_metropolis_test
+                action_new = action(sample_new)
 
-                    else
 
-                        ! 棄却された場合
 
-                        cycle loop_metropolis_test
+                ! Metropolis test
 
-                    end if
+                call random_number(metropolis)
 
-                end do &!
-                loop_metropolis_test
+                if ( exp(action_now - action_new) .gt. metropolis ) then
+
+                    ! 採択された場合
+
+                    num_samples_accepted = &!
+                    num_samples_accepted + 1_int32
+
+                else
+
+                    ! 棄却された場合
+
+                    sample_new = sample_now
+
+                end if
+
+
+
+                ! 採択率の計算
+
+                acceptance_rate(iter_sample) = real(num_samples_accepted, real64) / iter_sample
 
             end associate
             end associate
 
-
-
-            if ( num_samples_accepted .eq. num_samples_required ) then
-                exit loop_accepted_sample
-            end if
-
-        end do &!
-        loop_accepted_sample
+        end do
 
     end subroutine exe_gaussian_metropolis
 

@@ -15,23 +15,20 @@ program main
 
 
     !> 本 PROGRAM 用の PARAMETER
-    !> Metropolis 法の採択サンプル点数のリスト
-    integer(int32), parameter, dimension(5) :: num_samples_accepted_exponent_list = [3, 4, 5, 6, 7]
+    !> Metropolis 法のサンプル点数
+    integer(int32), parameter :: num_samples_required_log10 = 7_int32
 
-    !> 本 PROGRAM 用の PARAMETER
-    !> Metropolis 法の採択サンプル点数のリスト
-    integer(int32), parameter, dimension(5) :: num_samples_accepted_list = 10_int32 ** num_samples_accepted_exponent_list
 
 
     !> 本 PROGRAM 用の PARAMETER
-    !> Metropolis 法の採択サンプル点数の最大値
-    integer(int32), parameter :: num_samples_accepted_maxval = maxval( num_samples_accepted_list(:) )
+    !> Metropolis 法のサンプル点数
+    integer(int32), parameter :: num_samples_required = 10_int32 ** num_samples_required_log10
 
 
 
     !> 本 PROGRAM 用の変数
-    !> Metropolis 法で指定した個数のサンプルを得るのに要した総サンプル数
-    integer(int32) :: num_samples_total
+    !> Metropolis 法での採択率の推移
+    real(real64), allocatable, dimension(:) :: acceptance_rate
 
     !> 本 PROGRAM 用の変数
     !> Metropolis 法で生成したサンプルの期待値の格納用配列
@@ -57,21 +54,22 @@ program main
 
     ! Metropolis 法の結果を格納する配列の確保
 
-    allocate( expectation  (num_samples_accepted_maxval), mold=0.0_real64 )
-    allocate( expectation2 (num_samples_accepted_maxval), mold=0.0_real64 )
-    allocate( sample       (num_samples_accepted_maxval), mold=0.0_real64 )
+    allocate( acceptance_rate (num_samples_required) )
+    allocate( expectation     (num_samples_required) )
+    allocate( expectation2    (num_samples_required) )
+    allocate( sample          (num_samples_required) )
 
 
 
     ! Metropolis 法による正規分布に従う乱数の生成
 
     call exe_gaussian_metropolis( &!
-        seed                 = 1_int32                     , &!
-        num_samples_required = num_samples_accepted_maxval , &!
-        step_size            = 0.5_real64                  , &!
-        step_center          = 0.0_real64                  , &!
-        num_samples_total    = num_samples_total           , &!
-        generated_samples    = sample(:)                     &!
+        seed                 = 1_int32              , &!
+        num_samples_required = num_samples_required , &!
+        step_size            = 0.5_real64           , &!
+        step_center          = 0.0_real64           , &!
+        acceptance_rate      = acceptance_rate(:)   , &!
+        generated_samples    = sample(:)              &!
     )
 
 
@@ -95,7 +93,7 @@ program main
 
 
 
-    do iter_sample = 2_int32, num_samples_accepted_maxval
+    do iter_sample = 2_int32, num_samples_required
 
         associate( new_expectation => expectation ( iter_sample           ) )
         associate( ref_expectation => expectation ( iter_sample - 1_int32 ) )
@@ -123,12 +121,16 @@ program main
 
 
 
-    do iter_sample = 2_int32, num_samples_accepted_maxval
+    do iter_sample = 0_int32, (10_int32 * num_samples_required_log10)
 
-        write(write_unit) &!
-        &   sample       (iter_sample) , &!
-        &   expectation  (iter_sample) , &!
-        &   expectation2 (iter_sample)
+        associate( target_loc => floor( 10_int32 ** ( real(iter_sample, real64) / 10_int32 ) ) )
+
+            write(write_unit) &!
+            &                    target_loc   , &!
+            &   expectation    ( target_loc ) , &!
+            &   expectation2   ( target_loc )
+
+        end associate
 
     end do
 
