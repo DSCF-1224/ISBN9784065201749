@@ -7,11 +7,12 @@ module statistics_lib
     implicit none
 
     private
+    public  :: average
     public  :: std_corrected
     public  :: std_uncorrected
     public  :: var_corrected
     public  :: var_uncorrected
-    public  :: average
+    public  :: welford_online_average
 
 
 
@@ -47,6 +48,12 @@ module statistics_lib
         module procedure :: var_uncorrected_with_average
         module procedure :: var_uncorrected_without_average
     end interface var_uncorrected
+
+
+
+    interface welford_online_average
+        module procedure :: welford_online_average_array
+    end interface welford_online_average
 
 
 
@@ -245,5 +252,45 @@ module statistics_lib
         var_uncorrected_ = sum_squared_deviations( array(:) ) / size( array(:) )
 
     end function var_uncorrected_without_average
+
+
+
+    subroutine welford_online_average_array(source, average_)
+
+        !> 本 SUBROUTINE の仮引数
+        !> 平均を計算するデータ
+        real(real64), dimension(:), intent(in) :: source
+
+        !> 本 SUBROUTINE の仮引数
+        !> 計算した平均値を格納する配列
+        real(real64), dimension( size( source(:) ) ) :: average_
+
+
+
+        !> 本 SUBROUTINE 用の補助変数
+        integer(int32) :: iter
+
+
+
+        average_(1) = source(1)
+
+
+
+        do iter = 2_int32, size( source(:) )
+
+            associate( new_average => average_ ( iter           ) )
+            associate( ref_average => average_ ( iter - 1_int32 ) )
+            associate( new_source  => source   ( iter           ) )
+
+                new_average = &!
+                ref_average + (new_source - ref_average) / iter
+
+            end associate
+            end associate
+            end associate
+
+        end do
+
+    end subroutine welford_online_average_array
 
 end module statistics_lib

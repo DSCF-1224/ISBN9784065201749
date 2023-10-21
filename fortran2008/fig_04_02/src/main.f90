@@ -7,6 +7,7 @@ program main
     use, intrinsic :: iso_fortran_env, only: real64
 
     use, non_intrinsic :: gaussian_metropolis_lib
+    use, non_intrinsic :: statistics_lib
 
 
 
@@ -89,36 +90,8 @@ program main
 
 
 
-    expectation  (1) = sample(1)
-    expectation2 (1) = sample(1) * sample(1)
-
-
-
-    do iter_sample = 2_int32, num_samples_required
-
-        associate( new_expectation => expectation ( iter_sample           ) )
-        associate( ref_expectation => expectation ( iter_sample - 1_int32 ) )
-        associate( new_sample      => sample      ( iter_sample           ) )
-
-            new_expectation = &!
-            ref_expectation + (new_sample - ref_expectation) / iter_sample
-
-        end associate
-        end associate
-        end associate
-
-        associate( new_expectation2 => expectation2 ( iter_sample           ) )
-        associate( ref_expectation2 => expectation2 ( iter_sample - 1_int32 ) )
-        associate( new_sample       => sample       ( iter_sample           ) )
-
-            new_expectation2 = &!
-            ref_expectation2 + (new_sample * new_sample - ref_expectation2) / iter_sample
-
-        end associate
-        end associate
-        end associate
-
-    end do
+    call welford_online_average( sample(:)             , expectation  (:) )
+    call welford_online_average( sample(:) * sample(:) , expectation2 (:) )
 
 
 

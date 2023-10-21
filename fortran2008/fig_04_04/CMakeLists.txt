@@ -33,6 +33,15 @@ endif()
 
 
 
+if (NOT (EXISTS ${CMAKE_Fortran_MODULE_DIRECTORY}/statistics))
+    add_subdirectory(
+		${CMAKE_CURRENT_SOURCE_DIR}/../statistics
+		${CMAKE_Fortran_MODULE_DIRECTORY}/statistics
+	)
+endif()
+
+
+
 add_executable(${PROJECT_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.f90
 )
@@ -40,5 +49,6 @@ add_executable(${PROJECT_NAME}
 
 
 target_link_libraries( ${PROJECT_NAME} PRIVATE _gaussian_metropolis_lib )
+target_link_libraries( ${PROJECT_NAME} PRIVATE _statistics_lib          )
 
 # EOF
