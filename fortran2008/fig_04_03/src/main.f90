@@ -61,10 +61,11 @@ program main
 
 
 
-    ! Metropolis 法による正規分布に従う乱数の生成
+    ! 正しくない Metropolis 法による、正規分布に従わない乱数の生成
 
     call exe_gaussian_metropolis( &!
-        seed                 = 1_int32              , &!
+        prng_seed            = 1_int32              , &!
+        initial_sample       = 0.0_real64           , &!
         num_samples_required = num_samples_required , &!
         step_size            = 0.75_real64          , &!
         step_center          = 0.25_real64          , &!

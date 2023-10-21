@@ -32,15 +32,19 @@ module gaussian_metropolis_lib
 
 
 
-    subroutine exe_gaussian_metropolis(seed, num_samples_required, step_size, step_center, acceptance_rate, generated_samples)
+    subroutine exe_gaussian_metropolis(prng_seed, initial_sample, num_samples_required, step_size, step_center, acceptance_rate, generated_samples)
 
         !> 本 SUBROUTINE の仮引数
         !> 擬似乱数生成器のシード値
-        integer(int32), intent(in) :: seed
+        integer(int32), intent(in) :: prng_seed
 
         !> 本 SUBROUTINE の仮引数
         !> 必要なサンプル数
         integer(int32), intent(in) :: num_samples_required
+
+        !> 本 SUBROUTINE の仮引数
+        !> Metropolis 法で生成するサンプルの初期値
+        real(real64), intent(in) :: initial_sample
 
         !> 本 SUBROUTINE の仮引数
         !> Metropolis 法のステップ幅
@@ -92,12 +96,12 @@ module gaussian_metropolis_lib
 
 
         ! 擬似乱数生成器の初期化
-        call intrinsic_prng_initializer%put(seed)
+        call intrinsic_prng_initializer%put(prng_seed)
 
 
 
         ! Metropolis 法の初期値の指定
-        generated_samples    (1) = 0.0_real64
+        generated_samples    (1) = initial_sample
         acceptance_rate      (1) = 1.0_real64
         num_samples_accepted     = 1_int32
 
