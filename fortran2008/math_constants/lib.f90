@@ -8,6 +8,9 @@ module math_constants_lib
     !> 円周率
     real(real64), parameter :: MATH_PI_DEF = acos(-1.0_REAL64)
 
+    !> 本 MODULE で定義する PARAMETER
+    real(real64), parameter :: QUIET_NAN_REAL64 = transfer(source=-1_real64, mold=0.0_real64)
+
 
 
     !> 本 MODULE で定義する PARAMETER
