@@ -1,7 +1,7 @@
-if (NOT (EXISTS ${CMAKE_Fortran_MODULE_DIRECTORY}/intrinsic_prng_initializer))
+if (NOT (EXISTS ${CMAKE_Fortran_MODULE_DIRECTORY}/metropolis_sampling))
 	add_subdirectory(
-		${CMAKE_CURRENT_SOURCE_DIR}/../intrinsic_prng_initializer
-		${CMAKE_Fortran_MODULE_DIRECTORY}/intrinsic_prng_initializer
+		${CMAKE_CURRENT_SOURCE_DIR}/../metropolis_sampling
+		${CMAKE_Fortran_MODULE_DIRECTORY}/metropolis_sampling
 	)
 endif()
 
@@ -15,4 +15,4 @@ add_library(
 
 
 
-target_link_libraries( _gaussian_metropolis_lib PRIVATE _intrinsic_prng_initializer_lib )
+target_link_libraries( _gaussian_metropolis_lib PRIVATE _metropolis_sampling_lib )

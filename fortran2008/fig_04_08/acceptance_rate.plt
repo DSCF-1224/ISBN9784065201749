@@ -177,9 +177,7 @@ set fit brief errorvariables nocovariancevariables errorscaling prescale nowrap 
 GNUTERM = "qt"
 I = {0.0, 1.0}
 VoxelDistance = 0.0
-array step_size[6] = [0.5,1.0,3.0,4.0,6.0,8.0]
-
-array step_size  [6] = [0.5, 1.0, 3.0, 4.0, 6.0, 8.0]
+array step_size[7] = [0.5,1.0,2.0,3.0,4.0,6.0,8.0]
 
 plot for [iter=1:(|step_size|)] \
      sprintf( "sample%2.2d.dat", int( 10 * step_size[iter] ) ) \

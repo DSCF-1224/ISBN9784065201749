@@ -25,7 +25,7 @@ program main
 
     !> 本 PROGRAM 用の PARAMETER
     !> Metropolis 法のステップ幅
-    real(real64), parameter, dimension(6) :: list_step_size = [0.5_real64, 1.0_real64, 3.0_real64, 4.0_real64, 6.0_real64, 8.0_real64]
+    real(real64), parameter, dimension(7) :: list_step_size = [0.5_real64, 1.0_real64, 2.0_real64, 3.0_real64, 4.0_real64, 6.0_real64, 8.0_real64]
 
 
 

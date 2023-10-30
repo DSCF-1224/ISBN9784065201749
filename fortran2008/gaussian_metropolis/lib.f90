@@ -6,7 +6,7 @@ module gaussian_metropolis_lib
     use, intrinsic :: iso_fortran_env, only: int32
     use, intrinsic :: iso_fortran_env, only: real64
 
-    use, non_intrinsic :: intrinsic_prng_initializer_lib
+    use, non_intrinsic :: metropolis_sampling_lib
 
 
 
@@ -18,7 +18,7 @@ module gaussian_metropolis_lib
 
 
 
-    pure elemental function action(x)
+    pure function action(x)
 
         !> 本 FUNCTION の仮引数
         real(real64), intent(in) :: x
@@ -64,113 +64,16 @@ module gaussian_metropolis_lib
 
 
 
-        !> 本 SUBROUTINE 用の変数
-        !> 採択されたサンプル数
-        integer(int32) :: num_samples_accepted
-
-        !> 本 SUBROUTINE 用の変数
-        !> 作用の出力値の保持用
-        real(real64) :: action_now
-
-        !> 本 SUBROUTINE 用の変数
-        !> 作用の出力値の保持用
-        real(real64) :: action_new
-
-        !> 本 SUBROUTINE 用の変数
-        !> Metropolis Test 用
-        real(real64) :: metropolis
-
-        !> 本 SUBROUTINE 用の変数
-        !> サンプルの変化量の保持用
-        real(real64) :: sample_delta
-
-        !> 本 SUBROUTINE 用の変数
-        !> `RANDOM_SEED` 文用の変数
-        type(intrinsic_prng_initializer_type) :: intrinsic_prng_initializer
-
-
-
-        !> 本 SUBROUTINE 用の補助変数
-        integer(int32) :: iter_sample
-
-
-
-        ! 擬似乱数生成器の初期化
-        call intrinsic_prng_initializer%put(prng_seed)
-
-
-
-        ! Metropolis 法の初期値の指定
-        generated_samples    (1) = initial_sample
-        acceptance_rate      (1) = 1.0_real64
-        num_samples_accepted     = 1_int32
-
-
-
-        ! Metropolis 法によるサンプルの生成
-        do iter_sample = 2_int32, num_samples_required
-
-            associate( sample_now => generated_samples( iter_sample - 1_int32 ) )
-            associate( sample_new => generated_samples( iter_sample           ) )
-
-                ! 受理済みのサンプルに対する作用を計算
-    
-                action_now = action(sample_now)
-
-
-
-
-                ! 受理済みのサンプルからの
-                ! 変化量候補を生成
-    
-                call random_number(sample_delta)
-    
-                sample_delta = (sample_delta - 0.5_real64) * 2.0_real64 * step_size
-                sample_delta = sample_delta + step_center
-
-
-
-                ! 新しいのサンプル候補の生成
-
-                sample_new = sample_now + sample_delta
-
-
-
-                ! 新しいのサンプル候補に対する作用を計算
-
-                action_new = action(sample_new)
-
-
-
-                ! Metropolis test
-
-                call random_number(metropolis)
-
-                if ( exp(action_now - action_new) .gt. metropolis ) then
-
-                    ! 採択された場合
-
-                    num_samples_accepted = &!
-                    num_samples_accepted + 1_int32
-
-                else
-
-                    ! 棄却された場合
-
-                    sample_new = sample_now
-
-                end if
-
-
-
-                ! 採択率の計算
-
-                acceptance_rate(iter_sample) = real(num_samples_accepted, real64) / iter_sample
-
-            end associate
-            end associate
-
-        end do
+        call exe_metropolis_sampling( &!
+            action               = action               , &!
+            prng_seed            = prng_seed            , &!
+            initial_sample       = initial_sample       , &!
+            num_samples_required = num_samples_required , &!
+            step_size            = step_size            , &!
+            step_center          = step_center          , &!
+            acceptance_rate      = acceptance_rate      , &!
+            generated_samples    = generated_samples      &!
+        )
 
     end subroutine exe_gaussian_metropolis
 
