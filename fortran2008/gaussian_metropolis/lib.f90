@@ -14,6 +14,11 @@ module gaussian_metropolis_lib
 
 
 
+    private
+    public  :: exe_gaussian_metropolis
+
+
+
     contains
 
 
