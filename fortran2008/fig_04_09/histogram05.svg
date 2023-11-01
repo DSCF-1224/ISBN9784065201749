@@ -1,0 +1,1208 @@
+<?xml version="1.0" encoding="utf-8"  standalone="no"?>
+<svg  onload="if (typeof(gnuplot_svg)!='undefined') gnuplot_svg.Init(evt)" 
+ width="600" height="480"
+ viewBox="0 0 600 480"
+ xmlns="http://www.w3.org/2000/svg"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+>
+
+<title>Gnuplot</title>
+<desc>Produced by GNUPLOT 5.4 patchlevel 2 </desc>
+
+<script type="text/javascript" > <![CDATA[
+// From:	Marko Karjalainen <markokarjalainen@kolumbus.fi>
+// Date:	27 Aug 2018
+// Experimental gnuplot plugin for svg
+//
+// All svg elements on page get own gnuplot plugin attached by js, so no conflict with global variables.
+//
+// Javascript variables are read from second script tag and converted to json for import to plugin.
+// Inline events are removed from xml and new ones are attached with addEventListener function.
+// Inline events should be removed from xml and xml should have better id/class names to attach events from js.
+//
+// Improved mouseover text and image handling
+//   content changed to xml only if it really changed and bouncing is calculated once.
+//
+// Convert functions are same as before, maybe renamed better.
+//
+// Javascript routines for mouse and keyboard interaction with
+// SVG documents produced by gnuplot SVG terminal driver.
+
+// TODO do not create inline events to svg and give id or classes for getting elements
+// TODO make own svg layer x/y range sized for coordinates?
+
+if (window) {
+    window.addEventListener('load', function () {
+        // Find svg elements
+        var svg = document.querySelectorAll('svg');
+        for (var i = 0; i < svg.length; i++) {
+            // Init plugin
+            if (!svg[i].gnuplot) {
+                // Check if gnuplot generated svg
+                if(svg[i].getElementById('gnuplot_canvas')){
+                    svg[i].gnuplot = new gnuplot_svg(svg[i]);
+                }
+            }
+        }
+    });
+}
+
+gnuplot_svg = function (svgElement) {
+
+    var version = '09 April 2019';
+
+    var settings = {};
+
+    var viewBoxResetValue = [];
+
+    var drag = {
+        'enabled': false,
+        'offset': { 'x': 0, 'y': 0 },
+        'change': svgElement.createSVGPoint(),
+        'timeout': null
+    };
+
+    var coordinateText = {
+        'enabled': false,
+        'element': svgElement.getElementById('coord_text')
+    };
+
+    var popoverContainer = {
+        'element': null,
+        'content': null,
+    };
+
+    var popoverImage = {
+        'element': null,
+        'content': null,
+        'width': 300,
+        'height': 200,
+        'defaultWidth': 300,
+        'defaultHeight': 200,
+    };
+
+    var popoverText = {
+        'element': null,
+        'content': null,
+        'width': 11,
+        'height': 16,
+        'defaultWidth': 11,
+        'defaultHeight': 16,
+    };
+
+    var point = svgElement.createSVGPoint();
+
+    var axisDate = new Date();
+
+    var gridEnabled = false;
+
+    // Get plot boundaries and axis scaling information for mousing from current object script tag
+    // TODO add these to svg xml custom attribute for reading(json format)
+    var parseSettings = function () {
+        var script = svgElement.querySelectorAll('script');
+        if (script && script[1]) {
+            var scriptText = script[1].firstChild.nodeValue;
+            // Remove inline comments
+            scriptText = scriptText.replace(/^\s*\/\/.*\n/g, '');
+            // Change prefix to "
+            scriptText = scriptText.replace(/gnuplot_svg\./g, '"');
+            // Change = to " :
+            scriptText = scriptText.replace(/ = /g, '" : ');
+            // Change line endings to comma
+            scriptText = scriptText.replace(/;\n|\n/g, ',');
+            // Remove last comma
+            scriptText = scriptText.replace(/,+$/, '');
+            // Parse as json string
+            settings = JSON.parse("{\n" + scriptText + "\n}");
+        }
+    };
+
+    // Add interactive events
+    var addEvents = function () {
+        var i;
+
+        // Get keyentry elements
+        var toggleVisibility = svgElement.querySelectorAll('g[id$="_keyentry"]');
+        for (i = 0; i < toggleVisibility.length; i++) {
+            // ------- Remove inline events
+            toggleVisibility[i].removeAttribute('onclick');
+            // -------
+
+            // Add keyentry event to toggle visibility
+            toggleVisibility[i].addEventListener('click', key.bind(null, toggleVisibility[i].getAttribute('id'), null));
+        }
+
+        // ------- Remove inline events from bounding box
+        var boundingBox = svgElement.querySelector('rect[onclick^="gnuplot_svg.toggleCoordBox"]');
+        if (boundingBox) {
+            boundingBox.removeAttribute('onclick');
+            boundingBox.removeAttribute('onmousemove');
+        }
+        // ------- Remove inline events from canvas
+        var canvas = svgElement.getElementById('gnuplot_canvas');
+        if (canvas) {
+            canvas.removeAttribute('onclick');
+            canvas.removeAttribute('onmousemove');
+        }
+        // -------
+
+        // Get grid image
+        var toggleGrid = svgElement.querySelector('image[onclick^="gnuplot_svg.toggleGrid"]');
+        if (toggleGrid) {
+            // ------- Remove inline events
+            toggleGrid.removeAttribute('onclick');
+            // -------
+
+            // Add Toggle grid image event
+            toggleGrid.addEventListener('click', function (evt) {
+                grid();
+                evt.preventDefault();
+                evt.stopPropagation();
+            });
+        }
+
+        // Get hypertexts
+        var hyperText = svgElement.querySelectorAll('g[onmousemove^="gnuplot_svg.showHypertext"]');
+
+        // Set view element variables
+        if (hyperText.length) {
+            popoverContainer.element = svgElement.getElementById('hypertextbox');
+            popoverText.element = svgElement.getElementById('hypertext');
+            popoverImage.element = svgElement.getElementById('hyperimage');
+            popoverImage.defaultWidth = popoverImage.element.getAttribute('width');
+            popoverImage.defaultHeight = popoverImage.element.getAttribute('height');
+        }
+
+        for (i = 0; i < hyperText.length; i++) {
+            // Get text from attr uggly way, svg has empty title element
+            var text = hyperText[i].getAttribute('onmousemove').substr(31).slice(0, -2);
+
+            // ------- Remove inline events
+            hyperText[i].removeAttribute('onmousemove');
+            hyperText[i].removeAttribute('onmouseout');
+            // -------
+
+            // Add event
+            hyperText[i].addEventListener('mousemove', popover.bind(null, text, true));
+            hyperText[i].addEventListener('mouseout', popover.bind(null, null, false));
+        }
+
+        // Toggle coordinates visibility on left click on boundingBox element
+        svgElement.addEventListener('click', function (evt) {
+            if (!drag.enabled) {
+                // TODO check if inside data area, own layer for this is needed?
+                coordinate();
+                setCoordinateLabel(evt);
+            }
+        });
+
+        // Save move start position, enable drag after delay
+        svgElement.addEventListener('mousedown', function (evt) {
+
+            drag.offset = { 'x': evt.clientX, 'y': evt.clientY };
+
+            // Delay for moving, so not move accidentally if only click
+            drag.timeout = setTimeout(function () {
+                drag.enabled = true;
+            }, 250);
+
+            // Cancel draggable
+            evt.stopPropagation();
+            evt.preventDefault();
+            return false;
+        });
+
+        // Disable drag
+        svgElement.addEventListener('mouseup', function (evt) {
+            drag.enabled = false;
+            clearTimeout(drag.timeout);
+        });
+
+        // Mouse move
+        svgElement.addEventListener('mousemove', function (evt) {
+
+            // Drag svg element
+            if (evt.buttons == 1 && drag.enabled) {
+
+                // Position change
+                drag.change.x = evt.clientX - drag.offset.x;
+                drag.change.y = evt.clientY - drag.offset.y;
+
+                // Set current mouse position
+                drag.offset.x = evt.clientX;
+                drag.offset.y = evt.clientY;
+
+                // Convert to svg position
+                drag.change.matrixTransform(svgElement.getScreenCTM().inverse());
+
+                var viewBoxValues = getViewBox();
+
+                viewBoxValues[0] -= drag.change.x;
+                viewBoxValues[1] -= drag.change.y;
+
+                setViewBox(viewBoxValues);
+            }
+
+            // View coordinates on mousemove over svg element
+            if (coordinateText.enabled) {
+                // TODO check if inside data area, own layer for this is needed?
+                setCoordinateLabel(evt);
+            }
+
+        });
+
+        // Zoom with wheel
+        svgElement.addEventListener('wheel', function (evt) {
+            // x or y scroll zoom both axels
+            var delta = Math.max(-1, Math.min(1, (evt.deltaY || evt.deltaX)));
+
+            if (delta > 0) {
+                setViewBox(zoom('in'));
+            }
+            else {
+                setViewBox(zoom('out'));
+            }
+
+            // Disable scroll the entire webpage
+            evt.stopPropagation();
+            evt.preventDefault();
+            return false;
+        });
+
+        // Reset on right click or hold tap
+        svgElement.addEventListener('contextmenu', function (evt) {
+
+            setViewBox(viewBoxResetValue);
+
+            // Disable native context menu
+            evt.stopPropagation();
+            evt.preventDefault();
+            return false;
+        });
+
+        // Keyboard actions, old svg version not support key events so must listen window
+        window.addEventListener('keydown', function (evt) {
+
+            // Not capture event from inputs
+            // body = svg inline in page, svg = plain svg file, window = delegated events to object
+            if (evt.target.nodeName != 'BODY' && evt.target.nodeName != 'svg' && evt.target != window) {
+                return true;
+            }
+
+            var viewBoxValues = [];
+
+            switch (evt.key) {
+                // Move, Edge sends without Arrow word
+                case 'ArrowLeft':
+                case 'Left':
+                case 'ArrowRight':
+                case 'Right':
+                case 'ArrowUp':
+                case 'Up':
+                case 'ArrowDown':
+                case 'Down':
+                    viewBoxValues = pan(evt.key.replace('Arrow', '').toLowerCase());
+                    break;
+                // Zoom in
+                case '+':
+                case 'Add':
+                    viewBoxValues = zoom('in');
+                    break;
+                // Zoom out
+                case '-':
+                case 'Subtract':
+                    viewBoxValues = zoom('out');
+                    break;
+                // Reset
+                case 'Home':
+                    viewBoxValues = viewBoxResetValue;
+                    break;
+                // Toggle grid
+                case '#':
+                    grid();
+                    break;
+            }
+
+            if (viewBoxValues.length) {
+                setViewBox(viewBoxValues);
+            }
+        });
+    };
+
+    // Get svg viewbox details
+    var getViewBox = function () {
+        var viewBoxValues = svgElement.getAttribute('viewBox').split(' ');
+        viewBoxValues[0] = parseFloat(viewBoxValues[0]);
+        viewBoxValues[1] = parseFloat(viewBoxValues[1]);
+        viewBoxValues[2] = parseFloat(viewBoxValues[2]);
+        viewBoxValues[3] = parseFloat(viewBoxValues[3]);
+        return viewBoxValues;
+    };
+
+    // Set svg viewbox details
+    var setViewBox = function (viewBoxValues) {
+        svgElement.setAttribute('viewBox', viewBoxValues.join(' '));
+    };
+
+    // Set coordinate label position and text
+    var setCoordinateLabel = function (evt) {
+        var position = convertDOMToSVG({ 'x': evt.clientX, 'y': evt.clientY });
+
+        // Set coordinate label position
+        coordinateText.element.setAttribute('x', position.x);
+        coordinateText.element.setAttribute('y', position.y);
+
+        // Convert svg position to plot coordinates
+        var plotcoord = convertSVGToPlot(position);
+
+        // Parse label to view
+        var label = parseCoordinateLabel(plotcoord);
+
+        // Set coordinate label text
+        coordinateText.element.textContent = label.x + ' ' + label.y;
+    };
+
+    // Convert position DOM to SVG
+    var convertDOMToSVG = function (position) {
+        point.x = position.x;
+        point.y = position.y;
+        return point.matrixTransform(svgElement.getScreenCTM().inverse());
+    };
+
+    // Convert position SVG to Plot
+    var convertSVGToPlot = function (position) {
+        var plotcoord = {};
+        var plotx = position.x - settings.plot_xmin;
+        var ploty = position.y - settings.plot_ybot;
+        var x, y;
+
+        if (settings.plot_logaxis_x !== 0) {
+            x = Math.log(settings.plot_axis_xmax)
+                - Math.log(settings.plot_axis_xmin);
+            x = x * (plotx / (settings.plot_xmax - settings.plot_xmin))
+                + Math.log(settings.plot_axis_xmin);
+            x = Math.exp(x);
+        } else {
+            x = settings.plot_axis_xmin + (plotx / (settings.plot_xmax - settings.plot_xmin)) * (settings.plot_axis_xmax - settings.plot_axis_xmin);
+        }
+
+        if (settings.plot_logaxis_y !== 0) {
+            y = Math.log(settings.plot_axis_ymax)
+                - Math.log(settings.plot_axis_ymin);
+            y = y * (ploty / (settings.plot_ytop - settings.plot_ybot))
+                + Math.log(settings.plot_axis_ymin);
+            y = Math.exp(y);
+        } else {
+            y = settings.plot_axis_ymin + (ploty / (settings.plot_ytop - settings.plot_ybot)) * (settings.plot_axis_ymax - settings.plot_axis_ymin);
+        }
+
+        plotcoord.x = x;
+        plotcoord.y = y;
+        return plotcoord;
+    };
+
+    // Parse plot x/y values to label
+    var parseCoordinateLabel = function (plotcoord) {
+        var label = { 'x': 0, 'y': 0 };
+
+        if (settings.plot_timeaxis_x == 'DMS' || settings.plot_timeaxis_y == 'DMS') {
+            if (settings.plot_timeaxis_x == 'DMS') {
+                label.x = convertToDMS(plotcoord.x);
+            }
+            else {
+                label.x = plotcoord.x.toFixed(2);
+            }
+
+            if (settings.plot_timeaxis_y == 'DMS') {
+                label.y = convertToDMS(plotcoord.y);
+            }
+            else {
+                label.y = plotcoord.y.toFixed(2);
+            }
+
+        } else if (settings.polar_mode) {
+            polar = convertToPolar(plotcoord.x, plotcoord.y);
+            label.x = 'ang= ' + polar.ang.toPrecision(4);
+            label.y = 'R= ' + polar.r.toPrecision(4);
+
+        } else if (settings.plot_timeaxis_x == 'Date') {
+            axisDate.setTime(1000 * plotcoord.x);
+            var year = axisDate.getUTCFullYear();
+            var month = axisDate.getUTCMonth();
+            var date = axisDate.getUTCDate();
+            label.x = (' ' + date).slice(-2) + '/' + ('0' + (month + 1)).slice(-2) + '/' + year;
+            label.y = plotcoord.y.toFixed(2);
+        } else if (settings.plot_timeaxis_x == 'Time') {
+            axisDate.setTime(1000 * plotcoord.x);
+            var hour = axisDate.getUTCHours();
+            var minute = axisDate.getUTCMinutes();
+            var second = axisDate.getUTCSeconds();
+            label.x = ('0' + hour).slice(-2) + ':' + ('0' + minute).slice(-2) + ':' + ('0' + second).slice(-2);
+            label.y = plotcoord.y.toFixed(2);
+        } else if (settings.plot_timeaxis_x == 'DateTime') {
+            axisDate.setTime(1000 * plotcoord.x);
+            label.x = axisDate.toUTCString();
+            label.y = plotcoord.y.toFixed(2);
+        } else {
+            label.x = plotcoord.x.toFixed(2);
+            label.y = plotcoord.y.toFixed(2);
+        }
+
+        return label;
+    };
+
+    // Convert position to Polar
+    var convertToPolar = function (x, y) {
+        polar = {};
+        var phi, r;
+        phi = Math.atan2(y, x);
+        if (settings.plot_logaxis_r) {
+            r = Math.exp((x / Math.cos(phi) + Math.log(settings.plot_axis_rmin) / Math.LN10) * Math.LN10);
+        }
+        else if (settings.plot_axis_rmin > settings.plot_axis_rmax) {
+            r = settings.plot_axis_rmin - x / Math.cos(phi);
+        } else {
+            r = settings.plot_axis_rmin + x / Math.cos(phi);
+        }
+        phi = phi * (180 / Math.PI);
+        if (settings.polar_sense < 0) {
+            phi = -phi;
+        }
+        if (settings.polar_theta0 !== undefined) {
+            phi = phi + settings.polar_theta0;
+        }
+        if (phi > 180) { phi = phi - 360; }
+        polar.r = r;
+        polar.ang = phi;
+        return polar;
+    };
+
+    // Convert position to DMS
+    var convertToDMS = function (x) {
+        var dms = { d: 0, m: 0, s: 0 };
+        var deg = Math.abs(x);
+        dms.d = Math.floor(deg);
+        dms.m = Math.floor((deg - dms.d) * 60);
+        dms.s = Math.floor((deg - dms.d) * 3600 - dms.m * 60);
+        fmt = ((x < 0) ? '-' : ' ') + dms.d.toFixed(0) + '°' + dms.m.toFixed(0) + '"' + dms.s.toFixed(0) + "'";
+        return fmt;
+    };
+
+    // Set popover text to show
+    var setPopoverText = function (content) {
+
+        // Minimum length
+        popoverText.width = popoverText.defaultWidth;
+
+        // Remove old texts
+        while (null !== popoverText.element.firstChild) {
+            popoverText.element.removeChild(popoverText.element.firstChild);
+        }
+
+        var lines = content.split(/\n|\\n/g);
+
+        // Single line
+        if (lines.length <= 1) {
+            popoverText.element.textContent = content;
+            popoverText.width = popoverText.element.getComputedTextLength() + 8;
+        }
+        // Multiple lines
+        else {
+            var lineWidth = 0;
+            var tspanElement;
+
+            for (var l = 0; l < lines.length; l++) {
+                tspanElement = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                // Y relative position
+                if (l > 0) {
+                    tspanElement.setAttribute('dy', popoverText.defaultHeight);
+                }
+                // Append text
+                tspanElement.appendChild(document.createTextNode(lines[l]));
+                popoverText.element.appendChild(tspanElement);
+
+                // Max line width
+                lineWidth = tspanElement.getComputedTextLength() + 8;
+                if (popoverText.width < lineWidth) {
+                    popoverText.width = lineWidth;
+                }
+            }
+        }
+
+        // Box Height
+        popoverText.height = 2 + popoverText.defaultHeight * lines.length;
+        popoverContainer.element.setAttribute('height', popoverText.height);
+
+        // Box Width
+        popoverContainer.element.setAttribute('width', popoverText.width);
+    };
+
+    // Set popover image to show
+    var setPopoverImage = function (content) {
+
+        // Set default image size
+        popoverImage.width = popoverImage.defaultWidth;
+        popoverImage.height = popoverImage.defaultHeight;
+
+        // Pick up height and width from image(width,height):name
+        if (content.charAt(5) == '(') {
+            popoverImage.width = parseInt(content.slice(6));
+            popoverImage.height = parseInt(content.slice(content.indexOf(',') + 1));
+        }
+
+        popoverImage.element.setAttribute('width', popoverImage.width);
+        popoverImage.element.setAttribute('height', popoverImage.height);
+        popoverImage.element.setAttribute('preserveAspectRatio', 'none');
+
+        // attach image URL as a link
+        content = content.slice(content.indexOf(':') + 1);
+        popoverImage.element.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', content);
+    };
+
+    // Show popover text in given position
+    var showPopoverText = function (position) {
+        var domRect = svgElement.getBoundingClientRect();
+        domRect = convertDOMToSVG({'x': domRect.right, 'y': domRect.bottom });
+
+        // bounce off frame bottom
+        if (position.y + popoverText.height + 16 > domRect.y) {
+            position.y = domRect.y - popoverText.height - 16;
+        }
+
+        // bounce off right edge
+        if (position.x + popoverText.width + 14 > domRect.x) {
+            position.x = domRect.x - popoverText.width - 14;
+        }
+
+        // Change Box position
+        popoverContainer.element.setAttribute('x', position.x + 10);
+        popoverContainer.element.setAttribute('y', position.y + 4);
+        popoverContainer.element.setAttribute('visibility', 'visible');
+
+        // Change Text position
+        popoverText.element.setAttribute('x', position.x + 14);
+        popoverText.element.setAttribute('y', position.y + 18);
+        popoverText.element.setAttribute('visibility', 'visible');
+
+        // Change multiline text position
+        var tspan = popoverText.element.querySelectorAll('tspan');
+        for (var i = 0; i < tspan.length; i++) {
+            tspan[i].setAttribute('x', position.x + 14);
+        }
+
+        // Font properties
+        if (settings.hypertext_fontFamily != null)
+            popoverText.element.setAttribute('font-family', settings.hypertext_fontFamily);
+        if (settings.hypertext_fontStyle != null)
+            popoverText.element.setAttribute('font-style', settings.hypertext_fontStyle);
+        if (settings.hypertext_fontWeight != null)
+            popoverText.element.setAttribute('font-weight', settings.hypertext_fontWeight);
+        if (settings.hypertext_fontSize > 0)
+            popoverText.element.setAttribute('font-size', settings.hypertext_fontSize);
+    };
+
+    // Show popover image in given position
+    var showPopoverImage = function (position) {
+        var domRect = svgElement.getBoundingClientRect();
+        domRect = convertDOMToSVG({'x': domRect.right, 'y': domRect.bottom });
+
+        // bounce off frame bottom
+        if (position.y + popoverImage.height + 16 > domRect.y) {
+            position.y = domRect.y - popoverImage.height - 16;
+        }
+
+        // bounce off right edge
+        if (position.x + popoverImage.width + 14 > domRect.x) {
+            position.x = domRect.x - popoverImage.width - 14;
+        }
+
+        popoverImage.element.setAttribute('x', position.x);
+        popoverImage.element.setAttribute('y', position.y);
+        popoverImage.element.setAttribute('visibility', 'visible');
+    };
+
+    // Hide all popovers
+    var hidePopover = function () {
+        popoverContainer.element.setAttribute('visibility', 'hidden');
+        popoverText.element.setAttribute('visibility', 'hidden');
+        popoverImage.element.setAttribute('visibility', 'hidden');
+    };
+
+    // Zoom svg inside viewbox
+    var zoom = function (direction) {
+        var zoomRate = 1.1;
+        var viewBoxValues = getViewBox();
+
+        var widthBefore = viewBoxValues[2];
+        var heightBefore = viewBoxValues[3];
+
+        if (direction == 'in') {
+            viewBoxValues[2] /= zoomRate;
+            viewBoxValues[3] /= zoomRate;
+            // Pan to center
+            viewBoxValues[0] -= (viewBoxValues[2] - widthBefore) / 2;
+            viewBoxValues[1] -= (viewBoxValues[3] - heightBefore) / 2;
+        }
+        else if (direction == 'out') {
+            viewBoxValues[2] *= zoomRate;
+            viewBoxValues[3] *= zoomRate;
+            // Pan to center
+            viewBoxValues[0] += (widthBefore - viewBoxValues[2]) / 2;
+            viewBoxValues[1] += (heightBefore - viewBoxValues[3]) / 2;
+        }
+
+        return viewBoxValues;
+    };
+
+    // Pan svg inside viewbox
+    var pan = function (direction) {
+        var panRate = 10;
+        var viewBoxValues = getViewBox();
+
+        switch (direction) {
+            case 'left':
+                viewBoxValues[0] += panRate;
+                break;
+            case 'right':
+                viewBoxValues[0] -= panRate;
+                break;
+            case 'up':
+                viewBoxValues[1] += panRate;
+                break;
+            case 'down':
+                viewBoxValues[1] -= panRate;
+                break;
+        }
+
+        return viewBoxValues;
+    };
+
+    // Toggle key and chart on/off or set manually to wanted
+    var key = function (id, set, evt) {
+        var visibility = null;
+
+        // Chart element
+        var chartElement = svgElement.getElementById(id.replace('_keyentry', ''));
+        if (chartElement) {
+            // Set on/off
+            if (set === true || set === false) {
+                visibility = set ? 'visible' : 'hidden';
+            }
+            // Toggle
+            else {
+                visibility = chartElement.getAttribute('visibility') == 'hidden' ? 'visible' : 'hidden';
+            }
+            chartElement.setAttribute('visibility', visibility);
+        }
+
+        // Key element
+        var keyElement = svgElement.getElementById(id);
+        if (keyElement && visibility) {
+            keyElement.setAttribute('style', visibility == 'hidden' ? 'filter:url(#greybox)' : 'none');
+        }
+
+        if (evt !== undefined) {
+            evt.stopPropagation();
+            evt.preventDefault();
+        }
+    };
+
+    // Toggle coordinates on/off or set manually to wanted
+    var coordinate = function (set) {
+        if (coordinateText.element) {
+            // Set on/off
+            if (set === true || set === false) {
+                coordinateText.enabled = set;
+            }
+            // Toggle
+            else {
+                coordinateText.enabled = coordinateText.element.getAttribute('visibility') == 'hidden' ? true : false;
+            }
+            coordinateText.element.setAttribute('visibility', coordinateText.enabled ? 'visible' : 'hidden');
+        }
+    };
+
+    // Toggle grid on/off or set manually to wanted
+    var grid = function (set) {
+        var grid = svgElement.getElementsByClassName('gridline');
+
+        // Set on/off
+        if (set === true || set === false) {
+            gridEnabled = set;
+        }
+        // Toggle, get state from first element
+        else if (grid.length) {
+            gridEnabled = grid[0].getAttribute('visibility') == 'hidden' ? true : false;
+        }
+
+        for (i = 0; i < grid.length; i++) {
+            grid[i].setAttribute('visibility', gridEnabled ? 'visible' : 'hidden');
+        }
+    };
+
+    // Show popover text or image
+    var popover = function (content, set, evt) {
+
+        // Hide popover
+        if (set === false) {
+            hidePopover();
+
+            if (evt !== undefined) {
+                evt.stopPropagation();
+                evt.preventDefault();
+            }
+
+            return;
+        }
+
+        var position = null;
+
+        // Change content only if changed
+        if (popoverContainer.content != content) {
+
+            // Set current text
+            popoverContainer.content = content;
+
+            popoverImage.content = '';
+            popoverText.content = content;
+
+            // If text starts with image: process it as an xlinked bitmap
+            if (content.substring(0, 5) == 'image') {
+                var lines = content.split(/\n|\\n/g);
+                var nameindex = lines[0].indexOf(':');
+                if (nameindex > 0) {
+                    popoverImage.content = lines.shift();
+                    popoverText.content = '';
+
+                    // Additional text lines
+                    if (lines !== undefined && lines.length > 0) {
+                        popoverText.content = lines.join('\n');
+                    }
+                }
+            }
+
+            // Set image content
+            if(popoverImage.content){
+                setPopoverImage(popoverImage.content);
+            }
+
+            // Set text content
+            if(popoverText.content){
+                setPopoverText(popoverText.content);
+            }
+        }
+
+        if(popoverImage.content || popoverText.content){
+            position = convertDOMToSVG({'x': evt.clientX, 'y': evt.clientY });
+        }
+
+        // Show popover image on mouse position
+        if(popoverImage.content){
+            showPopoverImage(position);
+        }
+
+        // Show popover on mouse position
+        if(popoverText.content){
+            showPopoverText(position);
+        }
+
+        if (evt !== undefined) {
+            evt.stopPropagation();
+            evt.preventDefault();
+        }
+    };
+
+    // Parse plot settings
+    parseSettings();
+
+    // viewBox initial position and size
+    viewBoxResetValue = getViewBox();
+
+    // Set focusable for event focusing, not work on old svg version
+    svgElement.setAttribute('focusable', true);
+
+    // Disable native draggable
+    svgElement.setAttribute('draggable', false);
+
+    // Add events
+    addEvents();
+
+    // Return functions to outside use
+    return {
+        zoom: function (direction) {
+            setViewBox(zoom(direction));
+            return this;
+        },
+        pan: function (direction) {
+            setViewBox(pan(direction));
+            return this;
+        },
+        reset: function () {
+            setViewBox(viewBoxResetValue);
+            return this;
+        },
+        key: function (id, set) {
+            key(id, set);
+            return this;
+        },
+        coordinate: function (set) {
+            coordinate(set);
+            return this;
+        },
+        grid: function (set) {
+            grid(set);
+            return this;
+        }
+    };
+};
+
+// Old init function, remove when svg inline events removed
+gnuplot_svg.Init = function() { };
+]]>
+</script>
+
+<!-- Tie mousing to entire bounding box of the plot -->
+<rect x="0" y="0" width="600" height="480" fill="#ffffff" stroke="black" stroke-width="1"
+onclick="gnuplot_svg.toggleCoordBox(evt)"  onmousemove="gnuplot_svg.moveCoordBox(evt)"/>
+
+<!-- Also track mouse when it is on a plot element -->
+<g id="gnuplot_canvas" onclick="gnuplot_svg.toggleCoordBox(evt)" onmousemove="gnuplot_svg.moveCoordBox(evt)">
+
+<defs>
+
+	<circle id='gpDot' r='0.5' stroke-width='0.5' stroke='currentColor'/>
+	<path id='gpPt0' stroke-width='0.222' stroke='currentColor' d='M-1,0 h2 M0,-1 v2'/>
+	<path id='gpPt1' stroke-width='0.222' stroke='currentColor' d='M-1,-1 L1,1 M1,-1 L-1,1'/>
+	<path id='gpPt2' stroke-width='0.222' stroke='currentColor' d='M-1,0 L1,0 M0,-1 L0,1 M-1,-1 L1,1 M-1,1 L1,-1'/>
+	<rect id='gpPt3' stroke-width='0.222' stroke='currentColor' x='-1' y='-1' width='2' height='2'/>
+	<rect id='gpPt4' stroke-width='0.222' stroke='currentColor' fill='currentColor' x='-1' y='-1' width='2' height='2'/>
+	<circle id='gpPt5' stroke-width='0.222' stroke='currentColor' cx='0' cy='0' r='1'/>
+	<use xlink:href='#gpPt5' id='gpPt6' fill='currentColor' stroke='none'/>
+	<path id='gpPt7' stroke-width='0.222' stroke='currentColor' d='M0,-1.33 L-1.33,0.67 L1.33,0.67 z'/>
+	<use xlink:href='#gpPt7' id='gpPt8' fill='currentColor' stroke='none'/>
+	<use xlink:href='#gpPt7' id='gpPt9' stroke='currentColor' transform='rotate(180)'/>
+	<use xlink:href='#gpPt9' id='gpPt10' fill='currentColor' stroke='none'/>
+	<use xlink:href='#gpPt3' id='gpPt11' stroke='currentColor' transform='rotate(45)'/>
+	<use xlink:href='#gpPt11' id='gpPt12' fill='currentColor' stroke='none'/>
+	<path id='gpPt13' stroke-width='0.222' stroke='currentColor' d='M0,1.330 L1.265,0.411 L0.782,-1.067 L-0.782,-1.076 L-1.265,0.411 z'/>
+	<use xlink:href='#gpPt13' id='gpPt14' fill='currentColor' stroke='none'/>
+	<filter id='textbox' filterUnits='objectBoundingBox' x='0' y='0' height='1' width='1'>
+	  <feFlood flood-color='white' flood-opacity='1' result='bgnd'/>
+	  <feComposite in='SourceGraphic' in2='bgnd' operator='atop'/>
+	</filter>
+	<filter id='greybox' filterUnits='objectBoundingBox' x='0' y='0' height='1' width='1'>
+	  <feFlood flood-color='lightgrey' flood-opacity='1' result='grey'/>
+	  <feComposite in='SourceGraphic' in2='grey' operator='atop'/>
+	</filter>
+</defs>
+<g fill="none" color="white" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,422.40 L73.14,422.40 M481.31,422.40 L472.31,422.40  '/>	<g transform="translate(55.75,426.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.0</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,348.72 L73.14,348.72 M481.31,348.72 L472.31,348.72  '/>	<g transform="translate(55.75,352.62)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,275.04 L73.14,275.04 M481.31,275.04 L472.31,275.04  '/>	<g transform="translate(55.75,278.94)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,201.37 L73.14,201.37 M481.31,201.37 L472.31,201.37  '/>	<g transform="translate(55.75,205.27)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,127.69 L73.14,127.69 M481.31,127.69 L472.31,127.69  '/>	<g transform="translate(55.75,131.59)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,54.01 L73.14,54.01 M481.31,54.01 L472.31,54.01  '/>	<g transform="translate(55.75,57.91)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.5</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M93.94,422.40 L93.94,413.40 M93.94,54.01 L93.94,63.01  '/>	<g transform="translate(93.94,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >-6</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M153.53,422.40 L153.53,413.40 M153.53,54.01 L153.53,63.01  '/>	<g transform="translate(153.53,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >-4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M213.13,422.40 L213.13,413.40 M213.13,54.01 L213.13,63.01  '/>	<g transform="translate(213.13,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >-2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M272.73,422.40 L272.73,413.40 M272.73,54.01 L272.73,63.01  '/>	<g transform="translate(272.73,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 0</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M332.32,422.40 L332.32,413.40 M332.32,54.01 L332.32,63.01  '/>	<g transform="translate(332.32,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M391.92,422.40 L391.92,413.40 M391.92,54.01 L391.92,63.01  '/>	<g transform="translate(391.92,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M451.51,422.40 L451.51,413.40 M451.51,54.01 L451.51,63.01  '/>	<g transform="translate(451.51,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 6</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,54.01 L64.14,422.40 L481.31,422.40 L481.31,54.01 L64.14,54.01 Z  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(19.18,238.21) rotate(270)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >relative frequency</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(489.71,238.21) rotate(270)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(272.72,471.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >sample</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(272.72,57.91)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+	<g id="gnuplot_plot_1" ><title>103</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_1_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_1')">
+	<g transform="translate(566.43,215.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >10</tspan><tspan font-family="Arial"  font-size="9.6" dy="-6.00px">3</tspan><tspan font-size="12.0" dy="6.00"></tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(148,   0, 211)'  d='M515.48,211.21 L558.04,211.21  '/>	</g>
+	<path stroke='rgb(148,   0, 211)'  d='M64.14,422.40 L65.63,422.40 L68.61,422.40 L71.59,422.40 L74.57,422.40 L77.55,422.40 L80.53,422.40 L83.51,422.40
+		L86.49,422.40 L86.49,407.66 L89.47,407.66 L89.47,422.40 L92.45,422.40 L92.45,415.03 L95.43,415.03 L95.43,385.56
+		L98.41,385.56 L98.41,407.66 L101.39,407.66 L101.39,356.09 L104.37,356.09 L104.37,378.19 L107.35,378.19 L107.35,407.66
+		L110.33,407.66 L110.33,341.35 L113.31,341.35 L113.31,363.46 L116.29,363.46 L116.29,378.19 L119.27,378.19 L119.27,392.93
+		L122.25,392.93 L122.25,385.56 L125.23,385.56 L125.23,333.99 L128.21,333.99 L131.19,333.99 L131.19,326.62 L134.16,326.62
+		L134.16,297.15 L137.14,297.15 L137.14,304.52 L140.12,304.52 L140.12,282.41 L143.10,282.41 L143.10,289.78 L146.08,289.78
+		L149.06,289.78 L149.06,297.15 L152.04,297.15 L152.04,201.37 L155.02,201.37 L155.02,252.94 L158.00,252.94 L158.00,297.15
+		L160.98,297.15 L163.96,297.15 L163.96,267.68 L166.94,267.68 L166.94,275.04 L169.92,275.04 L169.92,238.20 L172.90,238.20
+		L172.90,260.31 L175.88,260.31 L175.88,282.41 L178.86,282.41 L178.86,333.99 L181.84,333.99 L181.84,304.52 L184.82,304.52
+		L184.82,282.41 L187.80,282.41 L187.80,333.99 L190.78,333.99 L193.76,333.99 L193.76,319.25 L196.74,319.25 L199.72,319.25
+		L199.72,333.99 L202.70,333.99 L202.70,326.62 L205.68,326.62 L205.68,333.99 L208.66,333.99 L208.66,326.62 L211.64,326.62
+		L211.64,356.09 L214.62,356.09 L214.62,392.93 L217.60,392.93 L217.60,341.35 L220.58,341.35 L220.58,385.56 L223.56,385.56
+		L226.54,385.56 L226.54,392.93 L229.52,392.93 L229.52,415.03 L232.50,415.03 L235.48,415.03 L235.48,385.56 L238.46,385.56
+		L238.46,415.03 L241.44,415.03 L244.42,415.03 L244.42,407.66 L247.40,407.66 L247.40,415.03 L250.38,415.03 L250.38,422.40
+		L253.36,422.40 L256.34,422.40 L256.34,407.66 L259.32,407.66 L259.32,415.03 L262.30,415.03 L262.30,422.40 L265.28,422.40
+		L265.28,415.03 L268.26,415.03 L271.24,415.03 L271.24,392.93 L274.21,392.93 L274.21,407.66 L277.19,407.66 L280.17,407.66
+		L280.17,422.40 L283.15,422.40 L286.13,422.40 L286.13,385.56 L289.11,385.56 L289.11,415.03 L292.09,415.03 L295.07,415.03
+		L295.07,392.93 L298.05,392.93 L301.03,392.93 L301.03,400.30 L304.01,400.30 L304.01,348.72 L306.99,348.72 L306.99,378.19
+		L309.97,378.19 L309.97,333.99 L312.95,333.99 L312.95,348.72 L315.93,348.72 L315.93,289.78 L318.91,289.78 L318.91,348.72
+		L321.89,348.72 L324.87,348.72 L324.87,363.46 L327.85,363.46 L330.83,363.46 L333.81,363.46 L333.81,341.35 L336.79,341.35
+		L336.79,385.56 L339.77,385.56 L339.77,326.62 L342.75,326.62 L342.75,363.46 L345.73,363.46 L345.73,289.78 L348.71,289.78
+		L348.71,326.62 L351.69,326.62 L351.69,319.25 L354.67,319.25 L354.67,245.57 L357.65,245.57 L357.65,326.62 L360.63,326.62
+		L360.63,304.52 L363.61,304.52 L363.61,348.72 L366.59,348.72 L366.59,319.25 L369.57,319.25 L369.57,356.09 L372.55,356.09
+		L372.55,252.94 L375.53,252.94 L375.53,333.99 L378.51,333.99 L381.49,333.99 L381.49,348.72 L384.47,348.72 L387.45,348.72
+		L387.45,392.93 L390.43,392.93 L390.43,356.09 L393.41,356.09 L396.39,356.09 L396.39,400.30 L399.37,400.30 L399.37,392.93
+		L402.35,392.93 L402.35,385.56 L405.33,385.56 L405.33,400.30 L408.31,400.30 L408.31,415.03 L411.29,415.03 L411.29,422.40
+		L414.26,422.40 L414.26,415.03 L417.24,415.03 L417.24,422.40 L420.22,422.40 L423.20,422.40 L426.18,422.40 L429.16,422.40
+		L432.14,422.40 L435.12,422.40 L438.10,422.40 L441.08,422.40 L444.06,422.40 L447.04,422.40 L450.02,422.40 L453.00,422.40
+		L455.98,422.40 L458.96,422.40 L461.94,422.40 L464.92,422.40 L467.90,422.40 L470.88,422.40 L473.86,422.40 L476.84,422.40
+		L479.82,422.40 L481.31,422.40  '/></g>
+	</g>
+	<g id="gnuplot_plot_2" ><title>105</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_2_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_2')">
+	<g transform="translate(566.43,233.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >10</tspan><tspan font-family="Arial"  font-size="9.6" dy="-6.00px">5</tspan><tspan font-size="12.0" dy="6.00"></tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0, 158, 115)'  d='M515.48,229.21 L558.04,229.21  '/>	</g>
+	<path stroke='rgb(  0, 158, 115)'  d='M64.14,422.11 L65.63,422.11 L65.63,421.81 L68.61,421.81 L68.61,421.88 L71.59,421.88 L71.59,421.66 L74.57,421.66
+		L74.57,421.44 L77.55,421.44 L77.55,421.66 L80.53,421.66 L83.51,421.66 L83.51,421.74 L86.49,421.74 L86.49,420.34
+		L89.47,420.34 L89.47,419.97 L92.45,419.97 L92.45,419.23 L95.43,419.23 L95.43,416.73 L98.41,416.73 L98.41,415.03
+		L101.39,415.03 L101.39,415.11 L104.37,415.11 L104.37,411.79 L107.35,411.79 L107.35,411.64 L110.33,411.64 L110.33,408.77
+		L113.31,408.77 L113.31,406.34 L116.29,406.34 L116.29,402.73 L119.27,402.73 L119.27,398.31 L122.25,398.31 L122.25,392.49
+		L125.23,392.49 L125.23,386.08 L128.21,386.08 L128.21,377.09 L131.19,377.09 L131.19,371.86 L134.16,371.86 L134.16,368.91
+		L137.14,368.91 L137.14,352.33 L140.12,352.33 L140.12,351.15 L143.10,351.15 L143.10,339.14 L146.08,339.14 L146.08,322.71
+		L149.06,322.71 L149.06,315.05 L152.04,315.05 L152.04,302.82 L155.02,302.82 L155.02,285.14 L158.00,285.14 L158.00,274.90
+		L160.98,274.90 L160.98,265.17 L163.96,265.17 L163.96,255.15 L166.94,255.15 L166.94,241.30 L169.92,241.30 L169.92,238.50
+		L172.90,238.50 L172.90,231.87 L175.88,231.87 L175.88,221.41 L178.86,221.41 L178.86,222.81 L181.84,222.81 L181.84,228.48
+		L184.82,228.48 L184.82,217.28 L187.80,217.28 L187.80,225.09 L190.78,225.09 L190.78,231.65 L193.76,231.65 L193.76,237.54
+		L196.74,237.54 L196.74,246.31 L199.72,246.31 L199.72,259.87 L202.70,259.87 L202.70,265.17 L205.68,265.17 L205.68,274.01
+		L208.66,274.01 L208.66,286.46 L211.64,286.46 L211.64,299.80 L214.62,299.80 L214.62,318.51 L217.60,318.51 L217.60,326.91
+		L220.58,326.91 L220.58,336.93 L223.56,336.93 L223.56,351.01 L226.54,351.01 L226.54,359.11 L229.52,359.11 L229.52,370.68
+		L232.50,370.68 L232.50,376.79 L235.48,376.79 L235.48,386.37 L238.46,386.37 L238.46,390.42 L241.44,390.42 L241.44,394.40
+		L244.42,394.40 L244.42,400.89 L247.40,400.89 L247.40,402.14 L250.38,402.14 L250.38,406.49 L253.36,406.49 L253.36,410.10
+		L256.34,410.10 L256.34,411.86 L259.32,411.86 L259.32,414.66 L262.30,414.66 L262.30,416.73 L265.28,416.73 L265.28,416.28
+		L268.26,416.28 L268.26,418.20 L271.24,418.20 L271.24,417.98 L274.21,417.98 L274.21,420.26 L277.19,420.26 L277.19,419.45
+		L280.17,419.45 L280.17,419.01 L283.15,419.01 L283.15,419.08 L286.13,419.08 L286.13,418.57 L289.11,418.57 L289.11,418.05
+		L292.09,418.05 L292.09,415.77 L295.07,415.77 L295.07,412.90 L298.05,412.90 L298.05,413.63 L301.03,413.63 L301.03,410.91
+		L304.01,410.91 L304.01,407.30 L306.99,407.30 L306.99,405.01 L309.97,405.01 L309.97,398.45 L312.95,398.45 L312.95,399.04
+		L315.93,399.04 L315.93,389.83 L318.91,389.83 L318.91,387.77 L321.89,387.77 L321.89,382.25 L324.87,382.25 L324.87,382.32
+		L327.85,382.32 L327.85,372.15 L330.83,372.15 L330.83,369.28 L333.81,369.28 L333.81,356.97 L336.79,356.97 L336.79,356.90
+		L339.77,356.90 L339.77,349.24 L342.75,349.24 L342.75,343.64 L345.73,343.64 L345.73,339.66 L348.71,339.66 L348.71,334.50
+		L351.69,334.50 L351.69,330.30 L354.67,330.30 L354.67,331.26 L357.65,331.26 L357.65,329.42 L360.63,329.42 L360.63,328.17
+		L363.61,328.17 L363.61,332.95 L366.59,332.95 L366.59,334.35 L369.57,334.35 L369.57,341.13 L372.55,341.13 L372.55,335.75
+		L375.53,335.75 L375.53,338.92 L378.51,338.92 L378.51,346.36 L381.49,346.36 L381.49,347.99 L384.47,347.99 L384.47,354.84
+		L387.45,354.84 L387.45,358.37 L390.43,358.37 L390.43,360.81 L393.41,360.81 L393.41,367.73 L396.39,367.73 L396.39,375.69
+		L399.37,375.69 L399.37,380.11 L402.35,380.11 L402.35,388.51 L405.33,388.51 L405.33,393.44 L408.31,393.44 L408.31,396.17
+		L411.29,396.17 L411.29,403.17 L414.26,403.17 L414.26,404.57 L417.24,404.57 L417.24,409.95 L420.22,409.95 L420.22,412.97
+		L423.20,412.97 L423.20,414.07 L426.18,414.07 L426.18,415.77 L429.16,415.77 L429.16,417.61 L432.14,417.61 L432.14,418.13
+		L435.12,418.13 L435.12,419.01 L438.10,419.01 L438.10,419.60 L441.08,419.60 L441.08,421.15 L444.06,421.15 L444.06,421.44
+		L447.04,421.44 L447.04,421.52 L450.02,421.52 L450.02,422.11 L453.00,422.11 L453.00,421.96 L455.98,421.96 L455.98,421.88
+		L458.96,421.88 L458.96,422.11 L461.94,422.11 L461.94,422.25 L464.92,422.25 L467.90,422.25 L467.90,422.33 L470.88,422.33
+		L470.88,422.25 L473.86,422.25 L473.86,421.66 L476.84,421.66 L476.84,422.40 L479.82,422.40 L481.31,422.40  '/></g>
+	</g>
+	<g id="gnuplot_plot_3" ><title>107</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_3_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_3')">
+	<g transform="translate(566.43,251.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >10</tspan><tspan font-family="Arial"  font-size="9.6" dy="-6.00px">7</tspan><tspan font-size="12.0" dy="6.00"></tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 86, 180, 233)'  d='M515.48,247.21 L558.04,247.21  '/>	</g>
+	<path stroke='rgb( 86, 180, 233)'  d='M64.14,422.35 L65.63,422.35 L65.63,422.32 L68.61,422.32 L68.61,422.27 L71.59,422.27 L71.59,422.24 L74.57,422.24
+		L74.57,422.17 L77.55,422.17 L77.55,422.11 L80.53,422.11 L80.53,421.94 L83.51,421.94 L83.51,421.70 L86.49,421.70
+		L86.49,421.55 L89.47,421.55 L89.47,421.26 L92.45,421.26 L92.45,420.81 L95.43,420.81 L95.43,420.21 L98.41,420.21
+		L98.41,419.54 L101.39,419.54 L101.39,418.61 L104.37,418.61 L104.37,417.39 L107.35,417.39 L107.35,415.92 L110.33,415.92
+		L110.33,414.10 L113.31,414.10 L113.31,412.04 L116.29,412.04 L116.29,409.23 L119.27,409.23 L119.27,406.00 L122.25,406.00
+		L122.25,402.33 L125.23,402.33 L125.23,398.33 L128.21,398.33 L128.21,392.92 L131.19,392.92 L131.19,387.60 L134.16,387.60
+		L134.16,381.85 L137.14,381.85 L137.14,375.45 L140.12,375.45 L140.12,367.92 L143.10,367.92 L143.10,359.93 L146.08,359.93
+		L146.08,352.05 L149.06,352.05 L149.06,343.32 L152.04,343.32 L152.04,334.42 L155.02,334.42 L155.02,325.12 L158.00,325.12
+		L158.00,317.65 L160.98,317.65 L160.98,308.88 L163.96,308.88 L163.96,301.54 L166.94,301.54 L166.94,294.42 L169.92,294.42
+		L169.92,288.92 L172.90,288.92 L172.90,284.14 L175.88,284.14 L175.88,280.66 L178.86,280.66 L178.86,278.51 L181.84,278.51
+		L181.84,277.55 L184.82,277.55 L184.82,278.29 L187.80,278.29 L187.80,280.20 L190.78,280.20 L190.78,283.20 L193.76,283.20
+		L193.76,288.47 L196.74,288.47 L196.74,294.15 L199.72,294.15 L199.72,301.48 L202.70,301.48 L202.70,308.93 L205.68,308.93
+		L205.68,317.03 L208.66,317.03 L208.66,325.88 L211.64,325.88 L211.64,334.91 L214.62,334.91 L214.62,344.28 L217.60,344.28
+		L217.60,352.85 L220.58,352.85 L220.58,360.42 L223.56,360.42 L223.56,368.36 L226.54,368.36 L226.54,375.98 L229.52,375.98
+		L229.52,382.20 L232.50,382.20 L232.50,388.48 L235.48,388.48 L235.48,393.70 L238.46,393.70 L238.46,398.62 L241.44,398.62
+		L241.44,402.83 L244.42,402.83 L244.42,406.27 L247.40,406.27 L247.40,409.34 L250.38,409.34 L250.38,412.04 L253.36,412.04
+		L253.36,414.08 L256.34,414.08 L256.34,415.68 L259.32,415.68 L259.32,417.12 L262.30,417.12 L262.30,417.87 L265.28,417.87
+		L265.28,418.66 L268.26,418.66 L268.26,419.02 L271.24,419.02 L271.24,419.14 L274.21,419.14 L274.21,419.04 L277.19,419.04
+		L277.19,418.64 L280.17,418.64 L280.17,417.94 L283.15,417.94 L283.15,416.82 L286.13,416.82 L286.13,415.57 L289.11,415.57
+		L289.11,413.88 L292.09,413.88 L292.09,411.69 L295.07,411.69 L295.07,408.86 L298.05,408.86 L298.05,405.84 L301.03,405.84
+		L301.03,402.06 L304.01,402.06 L304.01,397.71 L306.99,397.71 L306.99,392.90 L309.97,392.90 L309.97,387.05 L312.95,387.05
+		L312.95,380.95 L315.93,380.95 L315.93,374.10 L318.91,374.10 L318.91,366.90 L321.89,366.90 L321.89,358.64 L324.87,358.64
+		L324.87,350.64 L327.85,350.64 L327.85,341.32 L330.83,341.32 L330.83,332.64 L333.81,332.64 L333.81,323.19 L336.79,323.19
+		L336.79,314.34 L339.77,314.34 L339.77,306.02 L342.75,306.02 L342.75,298.04 L345.73,298.04 L345.73,291.22 L348.71,291.22
+		L348.71,285.06 L351.69,285.06 L351.69,279.47 L354.67,279.47 L354.67,276.43 L357.65,276.43 L357.65,273.50 L360.63,273.50
+		L360.63,273.73 L363.61,273.73 L363.61,274.03 L366.59,274.03 L366.59,275.62 L369.57,275.62 L369.57,279.82 L372.55,279.82
+		L372.55,283.69 L375.53,283.69 L375.53,290.96 L378.51,290.96 L378.51,297.61 L381.49,297.61 L381.49,305.67 L384.47,305.67
+		L384.47,314.44 L387.45,314.44 L387.45,323.34 L390.43,323.34 L390.43,332.34 L393.41,332.34 L393.41,340.97 L396.39,340.97
+		L396.39,350.11 L399.37,350.11 L399.37,358.51 L402.35,358.51 L402.35,366.37 L405.33,366.37 L405.33,373.81 L408.31,373.81
+		L408.31,380.55 L411.29,380.55 L411.29,387.08 L414.26,387.08 L414.26,392.55 L417.24,392.55 L417.24,397.50 L420.22,397.50
+		L420.22,401.90 L423.20,401.90 L423.20,406.15 L426.18,406.15 L426.18,408.86 L429.16,408.86 L429.16,411.82 L432.14,411.82
+		L432.14,413.91 L435.12,413.91 L435.12,415.85 L438.10,415.85 L438.10,417.50 L441.08,417.50 L441.08,418.47 L444.06,418.47
+		L444.06,419.57 L447.04,419.57 L447.04,420.29 L450.02,420.29 L450.02,420.77 L453.00,420.77 L453.00,421.15 L455.98,421.15
+		L455.98,421.52 L458.96,421.52 L458.96,421.74 L461.94,421.74 L461.94,421.94 L464.92,421.94 L464.92,422.09 L467.90,422.09
+		L467.90,422.16 L470.88,422.16 L470.88,422.27 L473.86,422.27 L473.86,422.28 L476.84,422.28 L476.84,422.32 L479.82,422.32
+		L479.82,422.35 L481.31,422.35  '/></g>
+	</g>
+	<g id="gnuplot_plot_4" ><title>pdf</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_4_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_4')">
+	<g transform="translate(566.43,269.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >pdf</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black' stroke-dasharray='10.0,5.0'  d='M515.48,265.21 L558.04,265.21  '/>	</g>
+	<path stroke='black' stroke-dasharray='10.0,5.0'  d='M64.14,422.35 L68.35,422.31 L72.57,422.25 L76.78,422.15 L81.00,422.00 L85.21,421.75 L89.42,421.38 L93.64,420.82
+		L97.85,420.00 L102.06,418.83 L106.28,417.21 L110.49,414.99 L114.71,412.04 L118.92,408.19 L123.13,403.30 L127.35,397.24
+		L131.56,389.91 L135.78,381.27 L139.99,371.37 L144.20,360.34 L148.42,348.42 L152.63,335.96 L156.84,323.40 L161.06,311.25
+		L165.27,300.09 L169.49,290.47 L173.70,282.91 L177.91,277.84 L182.13,275.55 L186.34,276.18 L190.56,279.69 L194.77,285.87
+		L198.98,294.37 L203.20,304.72 L207.41,316.37 L211.62,328.76 L215.84,341.34 L220.05,353.62 L224.27,365.19 L228.48,375.76
+		L232.69,385.12 L236.91,393.19 L241.12,399.95 L245.34,405.47 L249.55,409.84 L253.76,413.21 L257.98,415.70 L262.19,417.44
+		L266.40,418.54 L270.62,419.07 L274.83,419.07 L279.05,418.54 L283.26,417.44 L287.47,415.70 L291.69,413.21 L295.90,409.84
+		L300.11,405.47 L304.33,399.95 L308.54,393.19 L312.76,385.12 L316.97,375.76 L321.18,365.19 L325.40,353.62 L329.61,341.34
+		L333.83,328.76 L338.04,316.37 L342.25,304.72 L346.47,294.37 L350.68,285.87 L354.89,279.69 L359.11,276.18 L363.32,275.55
+		L367.54,277.84 L371.75,282.91 L375.96,290.47 L380.18,300.09 L384.39,311.25 L388.61,323.40 L392.82,335.96 L397.03,348.42
+		L401.25,360.34 L405.46,371.37 L409.67,381.27 L413.89,389.91 L418.10,397.24 L422.32,403.30 L426.53,408.19 L430.74,412.04
+		L434.96,414.99 L439.17,417.21 L443.39,418.83 L447.60,420.00 L451.81,420.82 L456.03,421.38 L460.24,421.75 L464.45,422.00
+		L468.67,422.15 L472.88,422.25 L477.10,422.31 L481.31,422.35  '/></g>
+	</g>
+<g fill="none" color="white" stroke="black" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="black" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,54.01 L64.14,422.40 L481.31,422.40 L481.31,54.01 L64.14,54.01 Z  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(272.72,30.91)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >step size : 0.5</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+
+<script type="text/javascript"><![CDATA[
+// plot boundaries and axis scaling information for mousing 
+gnuplot_svg.plot_term_xmax = 600;
+gnuplot_svg.plot_term_ymax = 480;
+gnuplot_svg.plot_xmin = 64.1;
+gnuplot_svg.plot_xmax = 481.3;
+gnuplot_svg.plot_ybot = 422.4;
+gnuplot_svg.plot_ytop = 54.0;
+gnuplot_svg.plot_width = 417.2;
+gnuplot_svg.plot_height = 368.4;
+gnuplot_svg.plot_axis_xmin = -7;
+gnuplot_svg.plot_axis_xmax = 7;
+gnuplot_svg.plot_axis_ymin = 0;
+gnuplot_svg.plot_axis_ymax = 0.5;
+gnuplot_svg.polar_mode = false;
+gnuplot_svg.plot_axis_x2min = "none";
+gnuplot_svg.plot_axis_y2min = "none";
+gnuplot_svg.plot_logaxis_x = 0;
+gnuplot_svg.plot_logaxis_y = 0;
+gnuplot_svg.plot_timeaxis_x = "";
+gnuplot_svg.plot_timeaxis_y = "";
+gnuplot_svg.hypertext_fontSize = 0;
+gnuplot_svg.hypertext_fontName = null;
+gnuplot_svg.hypertext_fontStyle = null;
+gnuplot_svg.hypertext_fontWeight = null;
+]]>
+</script>
+</g>
+
+  <text id="coord_text" text-anchor="start" pointer-events="none"
+  font-size="12" font-family="Arial"
+  visibility="hidden"> </text>
+
+  <rect id="hypertextbox" class="hypertextbox" pointer-events="none"
+  fill="white" stroke="black" opacity="0.8"
+  height="16" visibility="hidden" />
+
+  <text id="hypertext" class="hypertext" pointer-events="none"
+  font-size="12" font-family="Arial"
+  visibility="hidden"> </text>
+
+  <image id="hyperimage" class="hyperimage" pointer-events="none"
+  fill="white" stroke="black" opacity="0.8"
+  height="200" width="300" visibility="hidden" />
+</svg>
+

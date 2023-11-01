@@ -1,0 +1,1162 @@
+<?xml version="1.0" encoding="utf-8"  standalone="no"?>
+<svg  onload="if (typeof(gnuplot_svg)!='undefined') gnuplot_svg.Init(evt)" 
+ width="600" height="480"
+ viewBox="0 0 600 480"
+ xmlns="http://www.w3.org/2000/svg"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+>
+
+<title>Gnuplot</title>
+<desc>Produced by GNUPLOT 5.4 patchlevel 2 </desc>
+
+<script type="text/javascript" > <![CDATA[
+// From:	Marko Karjalainen <markokarjalainen@kolumbus.fi>
+// Date:	27 Aug 2018
+// Experimental gnuplot plugin for svg
+//
+// All svg elements on page get own gnuplot plugin attached by js, so no conflict with global variables.
+//
+// Javascript variables are read from second script tag and converted to json for import to plugin.
+// Inline events are removed from xml and new ones are attached with addEventListener function.
+// Inline events should be removed from xml and xml should have better id/class names to attach events from js.
+//
+// Improved mouseover text and image handling
+//   content changed to xml only if it really changed and bouncing is calculated once.
+//
+// Convert functions are same as before, maybe renamed better.
+//
+// Javascript routines for mouse and keyboard interaction with
+// SVG documents produced by gnuplot SVG terminal driver.
+
+// TODO do not create inline events to svg and give id or classes for getting elements
+// TODO make own svg layer x/y range sized for coordinates?
+
+if (window) {
+    window.addEventListener('load', function () {
+        // Find svg elements
+        var svg = document.querySelectorAll('svg');
+        for (var i = 0; i < svg.length; i++) {
+            // Init plugin
+            if (!svg[i].gnuplot) {
+                // Check if gnuplot generated svg
+                if(svg[i].getElementById('gnuplot_canvas')){
+                    svg[i].gnuplot = new gnuplot_svg(svg[i]);
+                }
+            }
+        }
+    });
+}
+
+gnuplot_svg = function (svgElement) {
+
+    var version = '09 April 2019';
+
+    var settings = {};
+
+    var viewBoxResetValue = [];
+
+    var drag = {
+        'enabled': false,
+        'offset': { 'x': 0, 'y': 0 },
+        'change': svgElement.createSVGPoint(),
+        'timeout': null
+    };
+
+    var coordinateText = {
+        'enabled': false,
+        'element': svgElement.getElementById('coord_text')
+    };
+
+    var popoverContainer = {
+        'element': null,
+        'content': null,
+    };
+
+    var popoverImage = {
+        'element': null,
+        'content': null,
+        'width': 300,
+        'height': 200,
+        'defaultWidth': 300,
+        'defaultHeight': 200,
+    };
+
+    var popoverText = {
+        'element': null,
+        'content': null,
+        'width': 11,
+        'height': 16,
+        'defaultWidth': 11,
+        'defaultHeight': 16,
+    };
+
+    var point = svgElement.createSVGPoint();
+
+    var axisDate = new Date();
+
+    var gridEnabled = false;
+
+    // Get plot boundaries and axis scaling information for mousing from current object script tag
+    // TODO add these to svg xml custom attribute for reading(json format)
+    var parseSettings = function () {
+        var script = svgElement.querySelectorAll('script');
+        if (script && script[1]) {
+            var scriptText = script[1].firstChild.nodeValue;
+            // Remove inline comments
+            scriptText = scriptText.replace(/^\s*\/\/.*\n/g, '');
+            // Change prefix to "
+            scriptText = scriptText.replace(/gnuplot_svg\./g, '"');
+            // Change = to " :
+            scriptText = scriptText.replace(/ = /g, '" : ');
+            // Change line endings to comma
+            scriptText = scriptText.replace(/;\n|\n/g, ',');
+            // Remove last comma
+            scriptText = scriptText.replace(/,+$/, '');
+            // Parse as json string
+            settings = JSON.parse("{\n" + scriptText + "\n}");
+        }
+    };
+
+    // Add interactive events
+    var addEvents = function () {
+        var i;
+
+        // Get keyentry elements
+        var toggleVisibility = svgElement.querySelectorAll('g[id$="_keyentry"]');
+        for (i = 0; i < toggleVisibility.length; i++) {
+            // ------- Remove inline events
+            toggleVisibility[i].removeAttribute('onclick');
+            // -------
+
+            // Add keyentry event to toggle visibility
+            toggleVisibility[i].addEventListener('click', key.bind(null, toggleVisibility[i].getAttribute('id'), null));
+        }
+
+        // ------- Remove inline events from bounding box
+        var boundingBox = svgElement.querySelector('rect[onclick^="gnuplot_svg.toggleCoordBox"]');
+        if (boundingBox) {
+            boundingBox.removeAttribute('onclick');
+            boundingBox.removeAttribute('onmousemove');
+        }
+        // ------- Remove inline events from canvas
+        var canvas = svgElement.getElementById('gnuplot_canvas');
+        if (canvas) {
+            canvas.removeAttribute('onclick');
+            canvas.removeAttribute('onmousemove');
+        }
+        // -------
+
+        // Get grid image
+        var toggleGrid = svgElement.querySelector('image[onclick^="gnuplot_svg.toggleGrid"]');
+        if (toggleGrid) {
+            // ------- Remove inline events
+            toggleGrid.removeAttribute('onclick');
+            // -------
+
+            // Add Toggle grid image event
+            toggleGrid.addEventListener('click', function (evt) {
+                grid();
+                evt.preventDefault();
+                evt.stopPropagation();
+            });
+        }
+
+        // Get hypertexts
+        var hyperText = svgElement.querySelectorAll('g[onmousemove^="gnuplot_svg.showHypertext"]');
+
+        // Set view element variables
+        if (hyperText.length) {
+            popoverContainer.element = svgElement.getElementById('hypertextbox');
+            popoverText.element = svgElement.getElementById('hypertext');
+            popoverImage.element = svgElement.getElementById('hyperimage');
+            popoverImage.defaultWidth = popoverImage.element.getAttribute('width');
+            popoverImage.defaultHeight = popoverImage.element.getAttribute('height');
+        }
+
+        for (i = 0; i < hyperText.length; i++) {
+            // Get text from attr uggly way, svg has empty title element
+            var text = hyperText[i].getAttribute('onmousemove').substr(31).slice(0, -2);
+
+            // ------- Remove inline events
+            hyperText[i].removeAttribute('onmousemove');
+            hyperText[i].removeAttribute('onmouseout');
+            // -------
+
+            // Add event
+            hyperText[i].addEventListener('mousemove', popover.bind(null, text, true));
+            hyperText[i].addEventListener('mouseout', popover.bind(null, null, false));
+        }
+
+        // Toggle coordinates visibility on left click on boundingBox element
+        svgElement.addEventListener('click', function (evt) {
+            if (!drag.enabled) {
+                // TODO check if inside data area, own layer for this is needed?
+                coordinate();
+                setCoordinateLabel(evt);
+            }
+        });
+
+        // Save move start position, enable drag after delay
+        svgElement.addEventListener('mousedown', function (evt) {
+
+            drag.offset = { 'x': evt.clientX, 'y': evt.clientY };
+
+            // Delay for moving, so not move accidentally if only click
+            drag.timeout = setTimeout(function () {
+                drag.enabled = true;
+            }, 250);
+
+            // Cancel draggable
+            evt.stopPropagation();
+            evt.preventDefault();
+            return false;
+        });
+
+        // Disable drag
+        svgElement.addEventListener('mouseup', function (evt) {
+            drag.enabled = false;
+            clearTimeout(drag.timeout);
+        });
+
+        // Mouse move
+        svgElement.addEventListener('mousemove', function (evt) {
+
+            // Drag svg element
+            if (evt.buttons == 1 && drag.enabled) {
+
+                // Position change
+                drag.change.x = evt.clientX - drag.offset.x;
+                drag.change.y = evt.clientY - drag.offset.y;
+
+                // Set current mouse position
+                drag.offset.x = evt.clientX;
+                drag.offset.y = evt.clientY;
+
+                // Convert to svg position
+                drag.change.matrixTransform(svgElement.getScreenCTM().inverse());
+
+                var viewBoxValues = getViewBox();
+
+                viewBoxValues[0] -= drag.change.x;
+                viewBoxValues[1] -= drag.change.y;
+
+                setViewBox(viewBoxValues);
+            }
+
+            // View coordinates on mousemove over svg element
+            if (coordinateText.enabled) {
+                // TODO check if inside data area, own layer for this is needed?
+                setCoordinateLabel(evt);
+            }
+
+        });
+
+        // Zoom with wheel
+        svgElement.addEventListener('wheel', function (evt) {
+            // x or y scroll zoom both axels
+            var delta = Math.max(-1, Math.min(1, (evt.deltaY || evt.deltaX)));
+
+            if (delta > 0) {
+                setViewBox(zoom('in'));
+            }
+            else {
+                setViewBox(zoom('out'));
+            }
+
+            // Disable scroll the entire webpage
+            evt.stopPropagation();
+            evt.preventDefault();
+            return false;
+        });
+
+        // Reset on right click or hold tap
+        svgElement.addEventListener('contextmenu', function (evt) {
+
+            setViewBox(viewBoxResetValue);
+
+            // Disable native context menu
+            evt.stopPropagation();
+            evt.preventDefault();
+            return false;
+        });
+
+        // Keyboard actions, old svg version not support key events so must listen window
+        window.addEventListener('keydown', function (evt) {
+
+            // Not capture event from inputs
+            // body = svg inline in page, svg = plain svg file, window = delegated events to object
+            if (evt.target.nodeName != 'BODY' && evt.target.nodeName != 'svg' && evt.target != window) {
+                return true;
+            }
+
+            var viewBoxValues = [];
+
+            switch (evt.key) {
+                // Move, Edge sends without Arrow word
+                case 'ArrowLeft':
+                case 'Left':
+                case 'ArrowRight':
+                case 'Right':
+                case 'ArrowUp':
+                case 'Up':
+                case 'ArrowDown':
+                case 'Down':
+                    viewBoxValues = pan(evt.key.replace('Arrow', '').toLowerCase());
+                    break;
+                // Zoom in
+                case '+':
+                case 'Add':
+                    viewBoxValues = zoom('in');
+                    break;
+                // Zoom out
+                case '-':
+                case 'Subtract':
+                    viewBoxValues = zoom('out');
+                    break;
+                // Reset
+                case 'Home':
+                    viewBoxValues = viewBoxResetValue;
+                    break;
+                // Toggle grid
+                case '#':
+                    grid();
+                    break;
+            }
+
+            if (viewBoxValues.length) {
+                setViewBox(viewBoxValues);
+            }
+        });
+    };
+
+    // Get svg viewbox details
+    var getViewBox = function () {
+        var viewBoxValues = svgElement.getAttribute('viewBox').split(' ');
+        viewBoxValues[0] = parseFloat(viewBoxValues[0]);
+        viewBoxValues[1] = parseFloat(viewBoxValues[1]);
+        viewBoxValues[2] = parseFloat(viewBoxValues[2]);
+        viewBoxValues[3] = parseFloat(viewBoxValues[3]);
+        return viewBoxValues;
+    };
+
+    // Set svg viewbox details
+    var setViewBox = function (viewBoxValues) {
+        svgElement.setAttribute('viewBox', viewBoxValues.join(' '));
+    };
+
+    // Set coordinate label position and text
+    var setCoordinateLabel = function (evt) {
+        var position = convertDOMToSVG({ 'x': evt.clientX, 'y': evt.clientY });
+
+        // Set coordinate label position
+        coordinateText.element.setAttribute('x', position.x);
+        coordinateText.element.setAttribute('y', position.y);
+
+        // Convert svg position to plot coordinates
+        var plotcoord = convertSVGToPlot(position);
+
+        // Parse label to view
+        var label = parseCoordinateLabel(plotcoord);
+
+        // Set coordinate label text
+        coordinateText.element.textContent = label.x + ' ' + label.y;
+    };
+
+    // Convert position DOM to SVG
+    var convertDOMToSVG = function (position) {
+        point.x = position.x;
+        point.y = position.y;
+        return point.matrixTransform(svgElement.getScreenCTM().inverse());
+    };
+
+    // Convert position SVG to Plot
+    var convertSVGToPlot = function (position) {
+        var plotcoord = {};
+        var plotx = position.x - settings.plot_xmin;
+        var ploty = position.y - settings.plot_ybot;
+        var x, y;
+
+        if (settings.plot_logaxis_x !== 0) {
+            x = Math.log(settings.plot_axis_xmax)
+                - Math.log(settings.plot_axis_xmin);
+            x = x * (plotx / (settings.plot_xmax - settings.plot_xmin))
+                + Math.log(settings.plot_axis_xmin);
+            x = Math.exp(x);
+        } else {
+            x = settings.plot_axis_xmin + (plotx / (settings.plot_xmax - settings.plot_xmin)) * (settings.plot_axis_xmax - settings.plot_axis_xmin);
+        }
+
+        if (settings.plot_logaxis_y !== 0) {
+            y = Math.log(settings.plot_axis_ymax)
+                - Math.log(settings.plot_axis_ymin);
+            y = y * (ploty / (settings.plot_ytop - settings.plot_ybot))
+                + Math.log(settings.plot_axis_ymin);
+            y = Math.exp(y);
+        } else {
+            y = settings.plot_axis_ymin + (ploty / (settings.plot_ytop - settings.plot_ybot)) * (settings.plot_axis_ymax - settings.plot_axis_ymin);
+        }
+
+        plotcoord.x = x;
+        plotcoord.y = y;
+        return plotcoord;
+    };
+
+    // Parse plot x/y values to label
+    var parseCoordinateLabel = function (plotcoord) {
+        var label = { 'x': 0, 'y': 0 };
+
+        if (settings.plot_timeaxis_x == 'DMS' || settings.plot_timeaxis_y == 'DMS') {
+            if (settings.plot_timeaxis_x == 'DMS') {
+                label.x = convertToDMS(plotcoord.x);
+            }
+            else {
+                label.x = plotcoord.x.toFixed(2);
+            }
+
+            if (settings.plot_timeaxis_y == 'DMS') {
+                label.y = convertToDMS(plotcoord.y);
+            }
+            else {
+                label.y = plotcoord.y.toFixed(2);
+            }
+
+        } else if (settings.polar_mode) {
+            polar = convertToPolar(plotcoord.x, plotcoord.y);
+            label.x = 'ang= ' + polar.ang.toPrecision(4);
+            label.y = 'R= ' + polar.r.toPrecision(4);
+
+        } else if (settings.plot_timeaxis_x == 'Date') {
+            axisDate.setTime(1000 * plotcoord.x);
+            var year = axisDate.getUTCFullYear();
+            var month = axisDate.getUTCMonth();
+            var date = axisDate.getUTCDate();
+            label.x = (' ' + date).slice(-2) + '/' + ('0' + (month + 1)).slice(-2) + '/' + year;
+            label.y = plotcoord.y.toFixed(2);
+        } else if (settings.plot_timeaxis_x == 'Time') {
+            axisDate.setTime(1000 * plotcoord.x);
+            var hour = axisDate.getUTCHours();
+            var minute = axisDate.getUTCMinutes();
+            var second = axisDate.getUTCSeconds();
+            label.x = ('0' + hour).slice(-2) + ':' + ('0' + minute).slice(-2) + ':' + ('0' + second).slice(-2);
+            label.y = plotcoord.y.toFixed(2);
+        } else if (settings.plot_timeaxis_x == 'DateTime') {
+            axisDate.setTime(1000 * plotcoord.x);
+            label.x = axisDate.toUTCString();
+            label.y = plotcoord.y.toFixed(2);
+        } else {
+            label.x = plotcoord.x.toFixed(2);
+            label.y = plotcoord.y.toFixed(2);
+        }
+
+        return label;
+    };
+
+    // Convert position to Polar
+    var convertToPolar = function (x, y) {
+        polar = {};
+        var phi, r;
+        phi = Math.atan2(y, x);
+        if (settings.plot_logaxis_r) {
+            r = Math.exp((x / Math.cos(phi) + Math.log(settings.plot_axis_rmin) / Math.LN10) * Math.LN10);
+        }
+        else if (settings.plot_axis_rmin > settings.plot_axis_rmax) {
+            r = settings.plot_axis_rmin - x / Math.cos(phi);
+        } else {
+            r = settings.plot_axis_rmin + x / Math.cos(phi);
+        }
+        phi = phi * (180 / Math.PI);
+        if (settings.polar_sense < 0) {
+            phi = -phi;
+        }
+        if (settings.polar_theta0 !== undefined) {
+            phi = phi + settings.polar_theta0;
+        }
+        if (phi > 180) { phi = phi - 360; }
+        polar.r = r;
+        polar.ang = phi;
+        return polar;
+    };
+
+    // Convert position to DMS
+    var convertToDMS = function (x) {
+        var dms = { d: 0, m: 0, s: 0 };
+        var deg = Math.abs(x);
+        dms.d = Math.floor(deg);
+        dms.m = Math.floor((deg - dms.d) * 60);
+        dms.s = Math.floor((deg - dms.d) * 3600 - dms.m * 60);
+        fmt = ((x < 0) ? '-' : ' ') + dms.d.toFixed(0) + '°' + dms.m.toFixed(0) + '"' + dms.s.toFixed(0) + "'";
+        return fmt;
+    };
+
+    // Set popover text to show
+    var setPopoverText = function (content) {
+
+        // Minimum length
+        popoverText.width = popoverText.defaultWidth;
+
+        // Remove old texts
+        while (null !== popoverText.element.firstChild) {
+            popoverText.element.removeChild(popoverText.element.firstChild);
+        }
+
+        var lines = content.split(/\n|\\n/g);
+
+        // Single line
+        if (lines.length <= 1) {
+            popoverText.element.textContent = content;
+            popoverText.width = popoverText.element.getComputedTextLength() + 8;
+        }
+        // Multiple lines
+        else {
+            var lineWidth = 0;
+            var tspanElement;
+
+            for (var l = 0; l < lines.length; l++) {
+                tspanElement = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                // Y relative position
+                if (l > 0) {
+                    tspanElement.setAttribute('dy', popoverText.defaultHeight);
+                }
+                // Append text
+                tspanElement.appendChild(document.createTextNode(lines[l]));
+                popoverText.element.appendChild(tspanElement);
+
+                // Max line width
+                lineWidth = tspanElement.getComputedTextLength() + 8;
+                if (popoverText.width < lineWidth) {
+                    popoverText.width = lineWidth;
+                }
+            }
+        }
+
+        // Box Height
+        popoverText.height = 2 + popoverText.defaultHeight * lines.length;
+        popoverContainer.element.setAttribute('height', popoverText.height);
+
+        // Box Width
+        popoverContainer.element.setAttribute('width', popoverText.width);
+    };
+
+    // Set popover image to show
+    var setPopoverImage = function (content) {
+
+        // Set default image size
+        popoverImage.width = popoverImage.defaultWidth;
+        popoverImage.height = popoverImage.defaultHeight;
+
+        // Pick up height and width from image(width,height):name
+        if (content.charAt(5) == '(') {
+            popoverImage.width = parseInt(content.slice(6));
+            popoverImage.height = parseInt(content.slice(content.indexOf(',') + 1));
+        }
+
+        popoverImage.element.setAttribute('width', popoverImage.width);
+        popoverImage.element.setAttribute('height', popoverImage.height);
+        popoverImage.element.setAttribute('preserveAspectRatio', 'none');
+
+        // attach image URL as a link
+        content = content.slice(content.indexOf(':') + 1);
+        popoverImage.element.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', content);
+    };
+
+    // Show popover text in given position
+    var showPopoverText = function (position) {
+        var domRect = svgElement.getBoundingClientRect();
+        domRect = convertDOMToSVG({'x': domRect.right, 'y': domRect.bottom });
+
+        // bounce off frame bottom
+        if (position.y + popoverText.height + 16 > domRect.y) {
+            position.y = domRect.y - popoverText.height - 16;
+        }
+
+        // bounce off right edge
+        if (position.x + popoverText.width + 14 > domRect.x) {
+            position.x = domRect.x - popoverText.width - 14;
+        }
+
+        // Change Box position
+        popoverContainer.element.setAttribute('x', position.x + 10);
+        popoverContainer.element.setAttribute('y', position.y + 4);
+        popoverContainer.element.setAttribute('visibility', 'visible');
+
+        // Change Text position
+        popoverText.element.setAttribute('x', position.x + 14);
+        popoverText.element.setAttribute('y', position.y + 18);
+        popoverText.element.setAttribute('visibility', 'visible');
+
+        // Change multiline text position
+        var tspan = popoverText.element.querySelectorAll('tspan');
+        for (var i = 0; i < tspan.length; i++) {
+            tspan[i].setAttribute('x', position.x + 14);
+        }
+
+        // Font properties
+        if (settings.hypertext_fontFamily != null)
+            popoverText.element.setAttribute('font-family', settings.hypertext_fontFamily);
+        if (settings.hypertext_fontStyle != null)
+            popoverText.element.setAttribute('font-style', settings.hypertext_fontStyle);
+        if (settings.hypertext_fontWeight != null)
+            popoverText.element.setAttribute('font-weight', settings.hypertext_fontWeight);
+        if (settings.hypertext_fontSize > 0)
+            popoverText.element.setAttribute('font-size', settings.hypertext_fontSize);
+    };
+
+    // Show popover image in given position
+    var showPopoverImage = function (position) {
+        var domRect = svgElement.getBoundingClientRect();
+        domRect = convertDOMToSVG({'x': domRect.right, 'y': domRect.bottom });
+
+        // bounce off frame bottom
+        if (position.y + popoverImage.height + 16 > domRect.y) {
+            position.y = domRect.y - popoverImage.height - 16;
+        }
+
+        // bounce off right edge
+        if (position.x + popoverImage.width + 14 > domRect.x) {
+            position.x = domRect.x - popoverImage.width - 14;
+        }
+
+        popoverImage.element.setAttribute('x', position.x);
+        popoverImage.element.setAttribute('y', position.y);
+        popoverImage.element.setAttribute('visibility', 'visible');
+    };
+
+    // Hide all popovers
+    var hidePopover = function () {
+        popoverContainer.element.setAttribute('visibility', 'hidden');
+        popoverText.element.setAttribute('visibility', 'hidden');
+        popoverImage.element.setAttribute('visibility', 'hidden');
+    };
+
+    // Zoom svg inside viewbox
+    var zoom = function (direction) {
+        var zoomRate = 1.1;
+        var viewBoxValues = getViewBox();
+
+        var widthBefore = viewBoxValues[2];
+        var heightBefore = viewBoxValues[3];
+
+        if (direction == 'in') {
+            viewBoxValues[2] /= zoomRate;
+            viewBoxValues[3] /= zoomRate;
+            // Pan to center
+            viewBoxValues[0] -= (viewBoxValues[2] - widthBefore) / 2;
+            viewBoxValues[1] -= (viewBoxValues[3] - heightBefore) / 2;
+        }
+        else if (direction == 'out') {
+            viewBoxValues[2] *= zoomRate;
+            viewBoxValues[3] *= zoomRate;
+            // Pan to center
+            viewBoxValues[0] += (widthBefore - viewBoxValues[2]) / 2;
+            viewBoxValues[1] += (heightBefore - viewBoxValues[3]) / 2;
+        }
+
+        return viewBoxValues;
+    };
+
+    // Pan svg inside viewbox
+    var pan = function (direction) {
+        var panRate = 10;
+        var viewBoxValues = getViewBox();
+
+        switch (direction) {
+            case 'left':
+                viewBoxValues[0] += panRate;
+                break;
+            case 'right':
+                viewBoxValues[0] -= panRate;
+                break;
+            case 'up':
+                viewBoxValues[1] += panRate;
+                break;
+            case 'down':
+                viewBoxValues[1] -= panRate;
+                break;
+        }
+
+        return viewBoxValues;
+    };
+
+    // Toggle key and chart on/off or set manually to wanted
+    var key = function (id, set, evt) {
+        var visibility = null;
+
+        // Chart element
+        var chartElement = svgElement.getElementById(id.replace('_keyentry', ''));
+        if (chartElement) {
+            // Set on/off
+            if (set === true || set === false) {
+                visibility = set ? 'visible' : 'hidden';
+            }
+            // Toggle
+            else {
+                visibility = chartElement.getAttribute('visibility') == 'hidden' ? 'visible' : 'hidden';
+            }
+            chartElement.setAttribute('visibility', visibility);
+        }
+
+        // Key element
+        var keyElement = svgElement.getElementById(id);
+        if (keyElement && visibility) {
+            keyElement.setAttribute('style', visibility == 'hidden' ? 'filter:url(#greybox)' : 'none');
+        }
+
+        if (evt !== undefined) {
+            evt.stopPropagation();
+            evt.preventDefault();
+        }
+    };
+
+    // Toggle coordinates on/off or set manually to wanted
+    var coordinate = function (set) {
+        if (coordinateText.element) {
+            // Set on/off
+            if (set === true || set === false) {
+                coordinateText.enabled = set;
+            }
+            // Toggle
+            else {
+                coordinateText.enabled = coordinateText.element.getAttribute('visibility') == 'hidden' ? true : false;
+            }
+            coordinateText.element.setAttribute('visibility', coordinateText.enabled ? 'visible' : 'hidden');
+        }
+    };
+
+    // Toggle grid on/off or set manually to wanted
+    var grid = function (set) {
+        var grid = svgElement.getElementsByClassName('gridline');
+
+        // Set on/off
+        if (set === true || set === false) {
+            gridEnabled = set;
+        }
+        // Toggle, get state from first element
+        else if (grid.length) {
+            gridEnabled = grid[0].getAttribute('visibility') == 'hidden' ? true : false;
+        }
+
+        for (i = 0; i < grid.length; i++) {
+            grid[i].setAttribute('visibility', gridEnabled ? 'visible' : 'hidden');
+        }
+    };
+
+    // Show popover text or image
+    var popover = function (content, set, evt) {
+
+        // Hide popover
+        if (set === false) {
+            hidePopover();
+
+            if (evt !== undefined) {
+                evt.stopPropagation();
+                evt.preventDefault();
+            }
+
+            return;
+        }
+
+        var position = null;
+
+        // Change content only if changed
+        if (popoverContainer.content != content) {
+
+            // Set current text
+            popoverContainer.content = content;
+
+            popoverImage.content = '';
+            popoverText.content = content;
+
+            // If text starts with image: process it as an xlinked bitmap
+            if (content.substring(0, 5) == 'image') {
+                var lines = content.split(/\n|\\n/g);
+                var nameindex = lines[0].indexOf(':');
+                if (nameindex > 0) {
+                    popoverImage.content = lines.shift();
+                    popoverText.content = '';
+
+                    // Additional text lines
+                    if (lines !== undefined && lines.length > 0) {
+                        popoverText.content = lines.join('\n');
+                    }
+                }
+            }
+
+            // Set image content
+            if(popoverImage.content){
+                setPopoverImage(popoverImage.content);
+            }
+
+            // Set text content
+            if(popoverText.content){
+                setPopoverText(popoverText.content);
+            }
+        }
+
+        if(popoverImage.content || popoverText.content){
+            position = convertDOMToSVG({'x': evt.clientX, 'y': evt.clientY });
+        }
+
+        // Show popover image on mouse position
+        if(popoverImage.content){
+            showPopoverImage(position);
+        }
+
+        // Show popover on mouse position
+        if(popoverText.content){
+            showPopoverText(position);
+        }
+
+        if (evt !== undefined) {
+            evt.stopPropagation();
+            evt.preventDefault();
+        }
+    };
+
+    // Parse plot settings
+    parseSettings();
+
+    // viewBox initial position and size
+    viewBoxResetValue = getViewBox();
+
+    // Set focusable for event focusing, not work on old svg version
+    svgElement.setAttribute('focusable', true);
+
+    // Disable native draggable
+    svgElement.setAttribute('draggable', false);
+
+    // Add events
+    addEvents();
+
+    // Return functions to outside use
+    return {
+        zoom: function (direction) {
+            setViewBox(zoom(direction));
+            return this;
+        },
+        pan: function (direction) {
+            setViewBox(pan(direction));
+            return this;
+        },
+        reset: function () {
+            setViewBox(viewBoxResetValue);
+            return this;
+        },
+        key: function (id, set) {
+            key(id, set);
+            return this;
+        },
+        coordinate: function (set) {
+            coordinate(set);
+            return this;
+        },
+        grid: function (set) {
+            grid(set);
+            return this;
+        }
+    };
+};
+
+// Old init function, remove when svg inline events removed
+gnuplot_svg.Init = function() { };
+]]>
+</script>
+
+<!-- Tie mousing to entire bounding box of the plot -->
+<rect x="0" y="0" width="600" height="480" fill="#ffffff" stroke="black" stroke-width="1"
+onclick="gnuplot_svg.toggleCoordBox(evt)"  onmousemove="gnuplot_svg.moveCoordBox(evt)"/>
+
+<!-- Also track mouse when it is on a plot element -->
+<g id="gnuplot_canvas" onclick="gnuplot_svg.toggleCoordBox(evt)" onmousemove="gnuplot_svg.moveCoordBox(evt)">
+
+<defs>
+
+	<circle id='gpDot' r='0.5' stroke-width='0.5' stroke='currentColor'/>
+	<path id='gpPt0' stroke-width='0.222' stroke='currentColor' d='M-1,0 h2 M0,-1 v2'/>
+	<path id='gpPt1' stroke-width='0.222' stroke='currentColor' d='M-1,-1 L1,1 M1,-1 L-1,1'/>
+	<path id='gpPt2' stroke-width='0.222' stroke='currentColor' d='M-1,0 L1,0 M0,-1 L0,1 M-1,-1 L1,1 M-1,1 L1,-1'/>
+	<rect id='gpPt3' stroke-width='0.222' stroke='currentColor' x='-1' y='-1' width='2' height='2'/>
+	<rect id='gpPt4' stroke-width='0.222' stroke='currentColor' fill='currentColor' x='-1' y='-1' width='2' height='2'/>
+	<circle id='gpPt5' stroke-width='0.222' stroke='currentColor' cx='0' cy='0' r='1'/>
+	<use xlink:href='#gpPt5' id='gpPt6' fill='currentColor' stroke='none'/>
+	<path id='gpPt7' stroke-width='0.222' stroke='currentColor' d='M0,-1.33 L-1.33,0.67 L1.33,0.67 z'/>
+	<use xlink:href='#gpPt7' id='gpPt8' fill='currentColor' stroke='none'/>
+	<use xlink:href='#gpPt7' id='gpPt9' stroke='currentColor' transform='rotate(180)'/>
+	<use xlink:href='#gpPt9' id='gpPt10' fill='currentColor' stroke='none'/>
+	<use xlink:href='#gpPt3' id='gpPt11' stroke='currentColor' transform='rotate(45)'/>
+	<use xlink:href='#gpPt11' id='gpPt12' fill='currentColor' stroke='none'/>
+	<path id='gpPt13' stroke-width='0.222' stroke='currentColor' d='M0,1.330 L1.265,0.411 L0.782,-1.067 L-0.782,-1.076 L-1.265,0.411 z'/>
+	<use xlink:href='#gpPt13' id='gpPt14' fill='currentColor' stroke='none'/>
+	<filter id='textbox' filterUnits='objectBoundingBox' x='0' y='0' height='1' width='1'>
+	  <feFlood flood-color='white' flood-opacity='1' result='bgnd'/>
+	  <feComposite in='SourceGraphic' in2='bgnd' operator='atop'/>
+	</filter>
+	<filter id='greybox' filterUnits='objectBoundingBox' x='0' y='0' height='1' width='1'>
+	  <feFlood flood-color='lightgrey' flood-opacity='1' result='grey'/>
+	  <feComposite in='SourceGraphic' in2='grey' operator='atop'/>
+	</filter>
+</defs>
+<g fill="none" color="white" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,422.40 L73.14,422.40 M481.31,422.40 L472.31,422.40  '/>	<g transform="translate(55.75,426.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.0</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,381.47 L73.14,381.47 M481.31,381.47 L472.31,381.47  '/>	<g transform="translate(55.75,385.37)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,340.54 L73.14,340.54 M481.31,340.54 L472.31,340.54  '/>	<g transform="translate(55.75,344.44)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,299.60 L73.14,299.60 M481.31,299.60 L472.31,299.60  '/>	<g transform="translate(55.75,303.50)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,258.67 L73.14,258.67 M481.31,258.67 L472.31,258.67  '/>	<g transform="translate(55.75,262.57)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,217.74 L73.14,217.74 M481.31,217.74 L472.31,217.74  '/>	<g transform="translate(55.75,221.64)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.5</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,176.81 L73.14,176.81 M481.31,176.81 L472.31,176.81  '/>	<g transform="translate(55.75,180.71)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.6</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,135.87 L73.14,135.87 M481.31,135.87 L472.31,135.87  '/>	<g transform="translate(55.75,139.77)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.7</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,94.94 L73.14,94.94 M481.31,94.94 L472.31,94.94  '/>	<g transform="translate(55.75,98.84)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.8</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,54.01 L73.14,54.01 M481.31,54.01 L472.31,54.01  '/>	<g transform="translate(55.75,57.91)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="end">
+		<text><tspan font-family="Arial" >0.9</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M102.06,422.40 L102.06,413.40 M102.06,54.01 L102.06,63.01  '/>	<g transform="translate(102.06,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >-1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M177.91,422.40 L177.91,413.40 M177.91,54.01 L177.91,63.01  '/>	<g transform="translate(177.91,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 0</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M253.76,422.40 L253.76,413.40 M253.76,54.01 L253.76,63.01  '/>	<g transform="translate(253.76,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M329.61,422.40 L329.61,413.40 M329.61,54.01 L329.61,63.01  '/>	<g transform="translate(329.61,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M405.46,422.40 L405.46,413.40 M405.46,54.01 L405.46,63.01  '/>	<g transform="translate(405.46,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M481.31,422.40 L481.31,413.40 M481.31,54.01 L481.31,63.01  '/>	<g transform="translate(481.31,444.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" > 4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,54.01 L64.14,422.40 L481.31,422.40 L481.31,54.01 L64.14,54.01 Z  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(19.18,238.21) rotate(270)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >relative frequency</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(489.71,238.21) rotate(270)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(272.72,471.30)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >sample</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(272.72,57.91)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+	<g id="gnuplot_plot_1" ><title>103</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_1_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_1')">
+	<g transform="translate(566.43,215.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >10</tspan><tspan font-family="Arial"  font-size="9.6" dy="-6.00px">3</tspan><tspan font-size="12.0" dy="6.00"></tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(148,   0, 211)'  d='M515.48,211.21 L558.04,211.21  '/>	</g>
+	<path stroke='rgb(148,   0, 211)'  d='M64.14,422.40 L67.93,422.40 L75.52,422.40 L83.10,422.40 L90.69,422.40 L98.27,422.40 L98.27,393.75 L105.86,393.75
+		L105.86,320.07 L113.44,320.07 L113.44,160.43 L121.03,160.43 L121.03,201.37 L128.61,201.37 L128.61,238.20 L136.20,238.20
+		L136.20,148.15 L143.78,148.15 L143.78,193.18 L151.37,193.18 L151.37,99.04 L158.95,99.04 L158.95,160.43 L166.54,160.43
+		L166.54,176.81 L174.12,176.81 L174.12,180.90 L181.71,180.90 L181.71,311.88 L189.29,311.88 L189.29,270.95 L196.88,270.95
+		L196.88,283.23 L204.46,283.23 L204.46,328.26 L212.05,328.26 L212.05,299.60 L219.63,299.60 L219.63,307.79 L227.22,307.79
+		L227.22,328.26 L234.80,328.26 L234.80,348.72 L242.39,348.72 L242.39,344.63 L249.97,344.63 L249.97,315.98 L257.56,315.98
+		L257.56,348.72 L265.14,348.72 L265.14,332.35 L272.73,332.35 L272.73,369.19 L280.31,369.19 L280.31,373.28 L287.89,373.28
+		L287.89,348.72 L295.48,348.72 L295.48,393.75 L303.06,393.75 L303.06,377.37 L310.65,377.37 L310.65,410.12 L318.23,410.12
+		L318.23,356.91 L325.82,356.91 L325.82,385.56 L333.40,385.56 L333.40,401.93 L340.99,401.93 L340.99,393.75 L348.57,393.75
+		L348.57,401.93 L356.16,401.93 L356.16,410.12 L363.74,410.12 L363.74,414.21 L371.33,414.21 L371.33,410.12 L378.91,410.12
+		L378.91,414.21 L386.50,414.21 L386.50,422.40 L394.08,422.40 L401.67,422.40 L409.25,422.40 L416.84,422.40 L424.42,422.40
+		L432.01,422.40 L439.59,422.40 L447.18,422.40 L454.76,422.40 L462.35,422.40 L469.93,422.40 L477.52,422.40 L481.31,422.40
+		 '/></g>
+	</g>
+	<g id="gnuplot_plot_2" ><title>105</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_2_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_2')">
+	<g transform="translate(566.43,233.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >10</tspan><tspan font-family="Arial"  font-size="9.6" dy="-6.00px">5</tspan><tspan font-size="12.0" dy="6.00"></tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0, 158, 115)'  d='M515.48,229.21 L558.04,229.21  '/>	</g>
+	<path stroke='rgb(  0, 158, 115)'  d='M64.14,422.40 L67.93,422.40 L75.52,422.40 L83.10,422.40 L90.69,422.40 L98.27,422.40 L98.27,394.73 L105.86,394.73
+		L105.86,310.90 L113.44,310.90 L113.44,272.10 L121.03,272.10 L121.03,239.19 L128.61,239.19 L128.61,215.16 L136.20,215.16
+		L136.20,200.30 L143.78,200.30 L143.78,193.10 L151.37,193.10 L151.37,176.27 L158.95,176.27 L158.95,173.25 L166.54,173.25
+		L166.54,161.99 L174.12,161.99 L174.12,209.84 L181.71,209.84 L181.71,262.44 L189.29,262.44 L189.29,260.19 L196.88,260.19
+		L196.88,269.48 L204.46,269.48 L204.46,272.38 L212.05,272.38 L212.05,276.52 L219.63,276.52 L219.63,287.69 L227.22,287.69
+		L227.22,295.02 L234.80,295.02 L234.80,301.98 L242.39,301.98 L242.39,311.27 L249.97,311.27 L249.97,320.44 L257.56,320.44
+		L257.56,332.19 L265.14,332.19 L265.14,339.39 L272.73,339.39 L272.73,348.76 L280.31,348.76 L280.31,356.38 L287.89,356.38
+		L287.89,365.01 L295.48,365.01 L295.48,373.73 L303.06,373.73 L303.06,382.00 L310.65,382.00 L310.65,387.24 L318.23,387.24
+		L318.23,395.18 L325.82,395.18 L325.82,400.75 L333.40,400.75 L333.40,404.19 L340.99,404.19 L340.99,408.16 L348.57,408.16
+		L348.57,409.59 L356.16,409.59 L356.16,412.49 L363.74,412.49 L363.74,414.38 L371.33,414.38 L371.33,415.15 L378.91,415.15
+		L378.91,418.14 L386.50,418.14 L386.50,419.21 L394.08,419.21 L394.08,420.93 L401.67,420.93 L409.25,420.93 L409.25,421.17
+		L416.84,421.17 L416.84,421.91 L424.42,421.91 L424.42,422.20 L432.01,422.20 L432.01,422.24 L439.59,422.24 L447.18,422.24
+		L447.18,422.20 L454.76,422.20 L454.76,422.36 L462.35,422.36 L469.93,422.36 L469.93,422.40 L477.52,422.40 L477.52,422.24
+		L481.31,422.24  '/></g>
+	</g>
+	<g id="gnuplot_plot_3" ><title>107</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_3_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_3')">
+	<g transform="translate(566.43,251.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >10</tspan><tspan font-family="Arial"  font-size="9.6" dy="-6.00px">7</tspan><tspan font-size="12.0" dy="6.00"></tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 86, 180, 233)'  d='M515.48,247.21 L558.04,247.21  '/>	</g>
+	<path stroke='rgb( 86, 180, 233)'  d='M64.14,422.40 L67.93,422.40 L75.52,422.40 L83.10,422.40 L90.69,422.40 L98.27,422.40 L98.27,395.17 L105.86,395.17
+		L105.86,310.31 L113.44,310.31 L113.44,266.80 L121.03,266.80 L121.03,237.25 L128.61,237.25 L128.61,213.96 L136.20,213.96
+		L136.20,197.54 L143.78,197.54 L143.78,184.63 L151.37,184.63 L151.37,174.10 L158.95,174.10 L158.95,167.65 L166.54,167.65
+		L166.54,163.45 L174.12,163.45 L174.12,211.10 L181.71,211.10 L181.71,259.81 L189.29,259.81 L189.29,262.74 L196.88,262.74
+		L196.88,266.44 L204.46,266.44 L204.46,271.96 L212.05,271.96 L212.05,278.14 L219.63,278.14 L219.63,285.79 L227.22,285.79
+		L227.22,294.38 L234.80,294.38 L234.80,303.59 L242.39,303.59 L242.39,313.27 L249.97,313.27 L249.97,322.94 L257.56,322.94
+		L257.56,333.15 L265.14,333.15 L265.14,342.61 L272.73,342.61 L272.73,352.13 L280.31,352.13 L280.31,360.45 L287.89,360.45
+		L287.89,369.35 L295.48,369.35 L295.48,376.91 L303.06,376.91 L303.06,384.05 L310.65,384.05 L310.65,389.85 L318.23,389.85
+		L318.23,395.39 L325.82,395.39 L325.82,400.13 L333.40,400.13 L333.40,404.18 L340.99,404.18 L340.99,407.65 L348.57,407.65
+		L348.57,410.57 L356.16,410.57 L356.16,413.20 L363.74,413.20 L363.74,415.05 L371.33,415.05 L371.33,416.77 L378.91,416.77
+		L378.91,418.02 L386.50,418.02 L386.50,419.08 L394.08,419.08 L394.08,419.92 L401.67,419.92 L401.67,420.46 L409.25,420.46
+		L409.25,421.05 L416.84,421.05 L416.84,421.41 L424.42,421.41 L424.42,421.72 L432.01,421.72 L432.01,421.89 L439.59,421.89
+		L439.59,422.04 L447.18,422.04 L447.18,422.13 L454.76,422.13 L454.76,422.21 L462.35,422.21 L462.35,422.28 L469.93,422.28
+		L469.93,422.31 L477.52,422.31 L477.52,422.35 L481.31,422.35  '/></g>
+	</g>
+	<g id="gnuplot_plot_4" ><title>pdf</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g id="gnuplot_plot_4_keyentry" visibility="visible" onclick="gnuplot_svg.toggleVisibility(evt,'gnuplot_plot_4')">
+	<g transform="translate(566.43,269.11)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >pdf</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black' stroke-dasharray='10.0,5.0'  d='M515.48,265.21 L558.04,265.21  '/>	</g>
+	<path stroke='black' stroke-dasharray='10.0,5.0'  d='M102.06,422.40 L106.28,336.75 L110.49,303.02 L114.71,278.36 L118.92,258.61 L123.13,242.17 L127.35,228.17 L131.56,216.14
+		L135.78,205.73 L139.99,196.73 L144.20,188.97 L148.42,182.33 L152.63,176.72 L156.84,172.07 L161.06,168.33 L165.27,165.46
+		L169.49,163.43 L173.70,162.22 L177.91,259.10 L182.13,259.36 L186.34,260.11 L190.56,261.36 L194.77,263.09 L198.98,265.28
+		L203.20,267.93 L207.41,271.00 L211.62,274.46 L215.84,278.29 L220.05,282.46 L224.27,286.92 L228.48,291.64 L232.69,296.59
+		L236.91,301.73 L241.12,307.01 L245.34,312.40 L249.55,317.86 L253.76,323.36 L257.98,328.85 L262.19,334.32 L266.40,339.72
+		L270.62,345.03 L274.83,350.22 L279.05,355.27 L283.26,360.16 L287.47,364.87 L291.69,369.39 L295.90,373.70 L300.11,377.80
+		L304.33,381.68 L308.54,385.34 L312.76,388.77 L316.97,391.98 L321.18,394.97 L325.40,397.74 L329.61,400.30 L333.83,402.65
+		L338.04,404.81 L342.25,406.78 L346.47,408.58 L350.68,410.20 L354.89,411.67 L359.11,412.99 L363.32,414.17 L367.54,415.23
+		L371.75,416.17 L375.96,417.00 L380.18,417.74 L384.39,418.38 L388.61,418.95 L392.82,419.45 L397.03,419.88 L401.25,420.26
+		L405.46,420.59 L409.67,420.87 L413.89,421.11 L418.10,421.31 L422.32,421.49 L426.53,421.64 L430.74,421.77 L434.96,421.88
+		L439.17,421.97 L443.39,422.04 L447.60,422.11 L451.81,422.16 L456.03,422.20 L460.24,422.24 L464.45,422.27 L468.67,422.29
+		L472.88,422.32 L477.10,422.33 L481.31,422.35  '/></g>
+	</g>
+<g fill="none" color="white" stroke="black" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="black" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='black'  d='M64.14,54.01 L64.14,422.40 L481.31,422.40 L481.31,54.01 L64.14,54.01 Z  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(272.72,30.91)" stroke="none" fill="black" font-family="Arial" font-size="12.00"  text-anchor="middle">
+		<text><tspan font-family="Arial" >step size : 0.5</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+
+<script type="text/javascript"><![CDATA[
+// plot boundaries and axis scaling information for mousing 
+gnuplot_svg.plot_term_xmax = 600;
+gnuplot_svg.plot_term_ymax = 480;
+gnuplot_svg.plot_xmin = 64.1;
+gnuplot_svg.plot_xmax = 481.3;
+gnuplot_svg.plot_ybot = 422.4;
+gnuplot_svg.plot_ytop = 54.0;
+gnuplot_svg.plot_width = 417.2;
+gnuplot_svg.plot_height = 368.4;
+gnuplot_svg.plot_axis_xmin = -1.5;
+gnuplot_svg.plot_axis_xmax = 4;
+gnuplot_svg.plot_axis_ymin = 0;
+gnuplot_svg.plot_axis_ymax = 0.9;
+gnuplot_svg.polar_mode = false;
+gnuplot_svg.plot_axis_x2min = "none";
+gnuplot_svg.plot_axis_y2min = "none";
+gnuplot_svg.plot_logaxis_x = 0;
+gnuplot_svg.plot_logaxis_y = 0;
+gnuplot_svg.plot_timeaxis_x = "";
+gnuplot_svg.plot_timeaxis_y = "";
+gnuplot_svg.hypertext_fontSize = 0;
+gnuplot_svg.hypertext_fontName = null;
+gnuplot_svg.hypertext_fontStyle = null;
+gnuplot_svg.hypertext_fontWeight = null;
+]]>
+</script>
+</g>
+
+  <text id="coord_text" text-anchor="start" pointer-events="none"
+  font-size="12" font-family="Arial"
+  visibility="hidden"> </text>
+
+  <rect id="hypertextbox" class="hypertextbox" pointer-events="none"
+  fill="white" stroke="black" opacity="0.8"
+  height="16" visibility="hidden" />
+
+  <text id="hypertext" class="hypertext" pointer-events="none"
+  font-size="12" font-family="Arial"
+  visibility="hidden"> </text>
+
+  <image id="hyperimage" class="hyperimage" pointer-events="none"
+  fill="white" stroke="black" opacity="0.8"
+  height="200" width="300" visibility="hidden" />
+</svg>
+
