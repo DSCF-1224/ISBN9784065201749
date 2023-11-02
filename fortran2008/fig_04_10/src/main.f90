@@ -69,29 +69,6 @@ program main
 
 
 
-    subroutine bimodal_metropolis_sampling(step_size)
-
-        !> 本 SUBROUTINE の仮引数
-        !> Metropolis 法のステップ幅
-        real(real64), intent(in) :: step_size
-
-
-
-        call exe_metropolis_sampling( &!
-            action               = action               , &!
-            prng_seed            = 1_int32              , &!
-            initial_sample       = 0.0_real64           , &!
-            num_samples_required = num_samples_required , &!
-            step_size            = step_size            , &!
-            step_center          = 0.0_real64           , &!
-            acceptance_rate      = acceptance_rate(:)   , &!
-            generated_samples    = sample(:)              &!
-        )
-
-    end subroutine bimodal_metropolis_sampling
-
-
-
     subroutine exe_simulation(step_size)
 
         !> 本 SUBROUTINE の仮引数
@@ -133,9 +110,20 @@ program main
 
 
 
-        ! Metropolis 法による正規分布に従う乱数の生成
-    
-        call bimodal_metropolis_sampling(step_size)
+        ! Metropolis 法による
+        ! 2つの Gauss 分布を重ね合わせた分布
+        ! に従う乱数の生成
+
+        call exe_metropolis_sampling( &!
+            action               = action               , &!
+            prng_seed            = 1_int32              , &!
+            initial_sample       = 0.0_real64           , &!
+            num_samples_required = num_samples_required , &!
+            step_size            = step_size            , &!
+            step_center          = 0.0_real64           , &!
+            acceptance_rate      = acceptance_rate(:)   , &!
+            generated_samples    = sample(:)              &!
+        )
 
 
 
