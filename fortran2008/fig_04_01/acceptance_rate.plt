@@ -13,7 +13,7 @@
 
 reset session
 
-set terminal svg size 600,480 fixed enhanced standalone font 'Arial,12' butt dashlength 1.0 
+set terminal svg size 600,480 fixed enhanced standalone font 'Arial,12' mousing standalone butt dashlength 1.0 
 set output 'acceptance_rate.svg'
 
 unset clip points

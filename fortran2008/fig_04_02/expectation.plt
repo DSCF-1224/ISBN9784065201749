@@ -13,7 +13,7 @@
 
 reset session
 
-set terminal svg size 600,480 fixed enhanced font 'Arial,12' standalone butt dashlength 1.0 
+set terminal svg size 600,480 fixed enhanced font 'Arial,12' standalone mousing standalone butt dashlength 1.0 
 
 unset clip points
 set clip one

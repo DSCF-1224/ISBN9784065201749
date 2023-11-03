@@ -46,7 +46,7 @@ module intrinsic_prng_initializer_lib
 
         call random_seed(size=initializer%size_seed)
 
-        allocate( initializer%seed_array( initializer%size_seed ), mold=0_int32 )
+        allocate( initializer%seed_array( initializer%size_seed ), source=0_int32 )
 
         initializer%seed_array(1) = seed
 
