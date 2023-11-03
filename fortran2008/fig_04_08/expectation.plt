@@ -50,7 +50,7 @@ unset raxis
 set theta counterclockwise right
 set style parallel front  lt black linewidth 2.000 dashtype solid
 set key title "step size" center
-set key fixed right bottom vertical Left reverse enhanced autotitle box lt black linewidth 1.000 dashtype solid
+set key fixed right top vertical Left reverse enhanced autotitle box lt black linewidth 1.000 dashtype solid
 set key noinvert samplen 4 spacing 1 width 0 height 0 
 set key maxcolumns 0 maxrows 0
 set key noopaque
