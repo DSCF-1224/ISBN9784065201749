@@ -13,7 +13,7 @@
 
 reset session
 
-set terminal svg size 600,480 fixed enhanced standalone font 'Arial,12' butt dashlength 1.0 
+set terminal svg size 600,480 fixed enhanced standalone font 'Arial,12' mousing standalone butt dashlength 1.0 
 
 unset clip points
 set clip one
@@ -133,13 +133,13 @@ set timestamp  font "" textcolor lt -1 norotate
 set trange [ * : * ] noreverse nowriteback
 set urange [ * : * ] noreverse nowriteback
 set vrange [ * : * ] noreverse nowriteback
-set xlabel "" 
+set xlabel "sample" 
 set xlabel  font "" textcolor lt -1 norotate
 set x2label "" 
 set x2label  font "" textcolor lt -1 norotate
 set xrange [ -3.00000 : 3.00000 ] noreverse writeback
 set x2range [ * : * ] noreverse writeback
-set ylabel "" 
+set ylabel "relative frequency" 
 set ylabel  font "" textcolor lt -1 rotate
 set y2label "" 
 set y2label  font "" textcolor lt -1 rotate
@@ -191,8 +191,8 @@ do for [iter=3:7:2] {
          using 1:( 10 ** (-iter) / 0.1 ) \
          every 1:1:0:0:(10 ** iter - 1):0 \
          binary format="%1double" \
-         bins binwidth=0.1 binvalue=sum \
-         with boxes \
+         bins binrange[-3.0:3.0] binwidth=0.1 binvalue=sum \
+         with histeps \
          notitle \
          ,\
          exp( -0.5 * x * x ) / sqrt(2 * pi) \
