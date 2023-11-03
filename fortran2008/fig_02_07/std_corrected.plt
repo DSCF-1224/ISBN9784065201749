@@ -176,7 +176,7 @@ VoxelDistance = 0.0
 
 array plot_title[5] = [2,10,100,1000,10000]
 
-set terminal svg size 600,480 fixed enhanced font 'Arial,12' butt dashlength 1.0 
+set terminal svg size 600,480 fixed enhanced font 'Arial,12' mousing standalone butt dashlength 1.0 
 set output 'std_corrected.svg'
 
 plot \

@@ -16,11 +16,13 @@ program main
 
 
     !> 本 PROGRAM 用の PARAMETER
+    !> 擬似乱数生成器のシード値の個数
     integer(int32), parameter :: num_seeds = 100_int32
 
 
 
     !> 本 PROGRAM 用の PARAMETER
+    !> 積分区間の半値幅
     integer(int32), dimension(5), parameter :: half_value_width = [2, 10, 100, 1000, 10000]
 
 
