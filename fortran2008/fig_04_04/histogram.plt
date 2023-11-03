@@ -129,13 +129,13 @@ set timestamp  font "" textcolor lt -1 norotate
 set trange [ * : * ] noreverse nowriteback
 set urange [ * : * ] noreverse nowriteback
 set vrange [ * : * ] noreverse nowriteback
-set xlabel "" 
+set xlabel "sample" 
 set xlabel  font "" textcolor lt -1 norotate
 set x2label "" 
 set x2label  font "" textcolor lt -1 norotate
-set xrange [ -10.0000 : 105.000 ] noreverse writeback
+set xrange [ -10.0000 : 110.000 ] noreverse writeback
 set x2range [ * : * ] noreverse writeback
-set ylabel "" 
+set ylabel "relative frequency" 
 set ylabel  font "" textcolor lt -1 rotate
 set y2label "" 
 set y2label  font "" textcolor lt -1 rotate
@@ -188,8 +188,8 @@ do for [iter=3:7:2] {
          using 1:( 10 ** (-iter) ) \
          every 1:1:0:0:(10 ** iter - 1):0 \
          binary format="%1double" \
-         bins binwidth=1.0 binvalue=sum \
-         with boxes \
+         bins binrange[ -10.0000 : 110.000 ] binwidth=1.0 binvalue=sum \
+         with histeps \
          notitle \
          ,\
          exp( -0.5 * x * x ) / sqrt(2 * pi) \
