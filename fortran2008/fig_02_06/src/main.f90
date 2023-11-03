@@ -17,12 +17,15 @@ program main
 
 
     !> 本 PROGRAM 用の PARAMETER
+    !> 生成したサンプルの保存間隔
     integer(int32), parameter :: num_samples_minval = 100_int32
 
     !> 本 PROGRAM 用の PARAMETER
+    !> サンプルの生成数
     integer(int32), parameter :: num_samples_maxval = 10000_int32
 
     !> 本 PROGRAM 用の PARAMETER
+    !> 擬似乱数生成器のシード値の個数
     integer(int32), parameter :: num_seeds = 100_int32
 
 
@@ -52,6 +55,8 @@ program main
 
 
 
+    ! 生成したサンプルを保存するファイルの作成
+
     open( &!
         file    = '../approx.dat' , &!
         newunit = write_unit      , &!
@@ -62,6 +67,8 @@ program main
 
 
 
+    ! 生成したサンプルを保存するタイミング (K) の作成
+
     call allocatable_with_arange( &!
         array  = num_samples_total                       , &!
         start_ =                      num_samples_minval , &!
@@ -71,6 +78,8 @@ program main
 
 
 
+    ! 擬似乱数生成器のシード値の作成
+
     call allocatable_with_arange( &!
         array  = seed      , &!
         start_ = 1_int32   , &!
@@ -79,9 +88,13 @@ program main
 
 
 
+    ! モンテカルロ法による \pi/4 の近似値を格納する領域の確保
+
     allocate( pi_quarter( size( num_samples_total(:) ), size( seed(:) ) ) )
 
 
+
+    ! モンテカルロ法による \pi/4 の近似値の算出 & 保存
 
     do iter_seed = 1_int32, size( seed(:) )
 
@@ -109,6 +122,9 @@ program main
 
 
 
+    ! モンテカルロ法で算出した \pi/4 の近似値の
+    ! 統計値を保存するファイルの作成
+
     open( &!
         file    = '../stats.dat' , &!
         newunit = write_unit     , &!
@@ -118,6 +134,8 @@ program main
     )
 
 
+
+    ! モンテカルロ法で算出した \pi/4 の近似値の算出 & 保存
 
     do iter_num_samples = 1_int32, size( num_samples_total(:) )
 
