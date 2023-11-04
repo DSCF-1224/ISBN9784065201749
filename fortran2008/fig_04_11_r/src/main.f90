@@ -6,7 +6,7 @@ program main
     use, intrinsic :: iso_fortran_env, only: int32
     use, intrinsic :: iso_fortran_env, only: real64
 
-    use, non_intrinsic :: math_constants_lib
+    use, non_intrinsic :: gauss_function_lib      , only: standard_gauss_function_action
     use, non_intrinsic :: metropolis_sampling_lib
     use, non_intrinsic :: statistics_lib
 
@@ -63,7 +63,7 @@ program main
 
 
 
-    pure function action(x)
+    pure function sampler_action(x) result(action)
 
         !> 本 FUNCTION の仮引数
         real(real64), intent(in) :: x
@@ -71,9 +71,9 @@ program main
         !> 本 FUNCTION の戻り値
         real(real64) :: action
 
-        action = 0.5_real64 * x * x
+        action = standard_gauss_function_action(x)
 
-    end function action
+    end function sampler_action
 
 
 
@@ -85,7 +85,7 @@ program main
         !> 本 FUNCTION の戻り値
         real(real64) :: objective_action
 
-        objective_action = action(x - eqn_4_21_c)
+        objective_action = standard_gauss_function_action(x - eqn_4_21_c)
 
     end function objective_action
 
@@ -99,7 +99,7 @@ program main
         !> 本 FUNCTION の戻り値
         real(real64) :: integrand
 
-        integrand = exp( action(x) - objective_action(x) )
+        integrand = exp( sampler_action(x) - objective_action(x) )
 
     end function integrand
 
@@ -158,7 +158,7 @@ program main
         eqn_4_21_c = target_eqn_4_21_c
 
         call exe_metropolis_sampling( &!
-            action               = action               , &!
+            action               = sampler_action       , &!
             prng_seed            = 1_int32              , &!
             initial_sample       = 0.0_real64           , &!
             num_samples_required = num_samples_required , &!

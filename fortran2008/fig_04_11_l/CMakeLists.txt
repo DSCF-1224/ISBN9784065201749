@@ -24,19 +24,19 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fortran-modules)
 
 
 
-if (NOT (EXISTS ${CMAKE_Fortran_MODULE_DIRECTORY}/gaussian_metropolis))
+if (NOT (EXISTS ${CMAKE_Fortran_MODULE_DIRECTORY}/gauss_function))
 	add_subdirectory(
-		${CMAKE_CURRENT_SOURCE_DIR}/../gaussian_metropolis
-		${CMAKE_Fortran_MODULE_DIRECTORY}/gaussian_metropolis
+		${CMAKE_CURRENT_SOURCE_DIR}/../gauss_function
+		${CMAKE_Fortran_MODULE_DIRECTORY}/gauss_function
 	)
 endif()
 
 
 
-if (NOT (EXISTS ${CMAKE_Fortran_MODULE_DIRECTORY}/math_constants))
+if (NOT (EXISTS ${CMAKE_Fortran_MODULE_DIRECTORY}/metropolis_sampling))
 	add_subdirectory(
-		${CMAKE_CURRENT_SOURCE_DIR}/../math_constants
-		${CMAKE_Fortran_MODULE_DIRECTORY}/math_constants
+		${CMAKE_CURRENT_SOURCE_DIR}/../metropolis_sampling
+		${CMAKE_Fortran_MODULE_DIRECTORY}/metropolis_sampling
 	)
 endif()
 
@@ -57,8 +57,8 @@ add_executable(${PROJECT_NAME}
 
 
 
-target_link_libraries( ${PROJECT_NAME} PRIVATE _gaussian_metropolis_lib )
-target_link_libraries( ${PROJECT_NAME} PRIVATE _math_constants_lib      )
+target_link_libraries( ${PROJECT_NAME} PRIVATE _gauss_function_lib      )
+target_link_libraries( ${PROJECT_NAME} PRIVATE _metropolis_sampling_lib )
 target_link_libraries( ${PROJECT_NAME} PRIVATE _statistics_lib          )
 
 # EOF

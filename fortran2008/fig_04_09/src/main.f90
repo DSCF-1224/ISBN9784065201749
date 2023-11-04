@@ -6,6 +6,7 @@ program main
     use, intrinsic :: iso_fortran_env, only: int32
     use, intrinsic :: iso_fortran_env, only: real64
 
+    use, non_intrinsic :: gauss_function_lib      , only: standard_gauss_function
     use, non_intrinsic :: metropolis_sampling_lib
 
 
@@ -60,16 +61,10 @@ program main
         !> 本 FUNCTION の戻り値
         real(real64) :: action
 
-        associate( x_mns3 => x - 3.0_real64 )
-        associate( x_pls3 => x + 3.0_real64 )
+        associate( term_mns3 => standard_gauss_function(x - 3.0_real64) )
+        associate( term_pls3 => standard_gauss_function(x + 3.0_real64) )
 
-            associate( term_mns3 => exp( - 0.5_real64 * x_mns3 * x_mns3 ) )
-            associate( term_pls3 => exp( - 0.5_real64 * x_pls3 * x_pls3 ) )
-
-                action = - log( term_mns3 + term_pls3 )
-
-            end associate
-            end associate
+            action = - log( term_mns3 + term_pls3 )
 
         end associate
         end associate

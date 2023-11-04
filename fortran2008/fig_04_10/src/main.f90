@@ -6,6 +6,7 @@ program main
     use, intrinsic :: iso_fortran_env, only: int32
     use, intrinsic :: iso_fortran_env, only: real64
 
+    use, non_intrinsic :: gauss_function_lib      , only: standard_gauss_function_action
     use, non_intrinsic :: math_constants_lib
     use, non_intrinsic :: metropolis_sampling_lib
 
@@ -60,7 +61,7 @@ program main
         !> 本 FUNCTION の戻り値
         real(real64) :: action
 
-        if      ( x .ge.  0.0_real64 ) then ; action =   (0.5_real64 * x * x) + MATH_LOG_SQRT_2PI
+        if      ( x .ge.  0.0_real64 ) then ; action =   standard_gauss_function_action(x) + MATH_LOG_SQRT_2PI
         else if ( x .lt. -1.0_real64 ) then ; action =   huge(x)
         else                                ; action = - log( MATH_2_PI * sqrt( 1.0_real64 - x * x ) )
         end if
